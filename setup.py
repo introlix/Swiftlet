@@ -24,11 +24,11 @@ def get_requirements() -> List[str]:
 
 
 setuptools.setup(
-    name="InferLite",
+    name="SwiftLet",
     version="0.1",
-    author="InferLite contributors",
+    author="SwiftLet contributors",
     license="Apache 2.0",
-    description=("InferLite model implementation"),
+    description=("SwiftLet model implementation"),
     long_description=read_readme(),
     long_description_content_type="text/markdown",
     classifiers=[
