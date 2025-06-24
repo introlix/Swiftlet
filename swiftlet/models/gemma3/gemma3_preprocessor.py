@@ -7,8 +7,8 @@ import torch
 from PIL import Image
 from swiftlet.kernels.siglip_vision import preprocessor as siglip_vision_preprocessor
 from swiftlet.kernels.siglip_vision import pan_and_scan
-from . import tokenizer
-from . import config as gemma_config
+from swiftlet.models.gemma import tokenizer
+from swiftlet.models.gemma import config as gemma_config
 
 CROPPED_IMAGE_PREFIX = "here is the original image"
 CROPPED_IMAGE_FILLER = "and here are some crops to help you see better"
