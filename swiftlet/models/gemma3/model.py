@@ -30,7 +30,7 @@ class Gemma3Block(nn.Module):
             config=config, attn_type=gemma_config.AttentionType.GLOBAL
         )
         self.local_attn = GemmaAttention(
-            config=config, attn_type=gemma_config.AttentionType.LOCAL
+            config=config, attn_type=gemma_config.AttentionType.LOCAL_SLIDING
         )
         block = [self.local_attn, self.local_attn, self.local_attn, self.local_attn, self.global_attn]
         self.attn_types = block * (config.num_hidden_layers // len(block))
