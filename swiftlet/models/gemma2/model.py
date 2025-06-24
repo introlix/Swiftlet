@@ -222,14 +222,14 @@ class Gemma2ForCausalLM(nn.Module):
             embedder_weight = embedder_weight * self.embedder.weight_scaler.unsqueeze(
                 -1
             )
-            next_tokens, logits = self.sampler(
-                embedding=embedder_weight,
-                hidden_states=hidden_states,
-                output_positions=output_positions,
-                temperatures=temperatures,
-                top_ps=top_ps,
-                top_ks=top_ks,
-            )
+        next_tokens, logits = self.sampler(
+            embedding=embedder_weight,
+            hidden_states=hidden_states,
+            output_positions=output_positions,
+            temperatures=temperatures,
+            top_ps=top_ps,
+            top_ks=top_ks,
+        )
         return next_tokens, logits
 
     def generate(
