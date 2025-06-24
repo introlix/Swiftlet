@@ -123,7 +123,7 @@ class Gemma3Model(nn.Module):
             layer = self.layers[i]
             hidden_states = layer(
                 hidden_states=hidden_states,
-                freqs_cis=freqs_cis[self.attn_types[i]],
+                freqs_cis=freqs_cis.get(layer.attn_type),
                 kv_write_indices=kv_write_indices,
                 kv_cache=kv_caches[i],
                 mask=mask,
