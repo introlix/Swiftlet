@@ -28,10 +28,6 @@ class Gemma2Block(nn.Module):
         self.local_attn = GemmaAttention(
             config=config, attn_type=gemma_config.AttentionType.LOCAL
         )
-
-        self.attn_types = [self.local_attn, self.global_attn] * (
-            config.num_hidden_layers // 2
-        )
         self.mlp = GemmaMLP(
             hidden_size=config.hidden_size,
             intermediate_size=config.intermediate_size,
