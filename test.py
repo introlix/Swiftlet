@@ -23,5 +23,4 @@ output = model.generate(
     top_k=50,
 )
 
-
 print("▶️", output)

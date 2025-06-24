@@ -92,6 +92,15 @@ class Gemma3Model(nn.Module):
         self.config = config
         self.vocab_size = config.vocab_size
 
+        self.global_attn = GemmaAttention(
+            config=config, attn_type=gemma_config.AttentionType.GLOBAL
+        )
+        self.local_attn = GemmaAttention(
+            config=config, attn_type=gemma_config.AttentionType.LOCAL_SLIDING
+        )
+        block = [self.local_attn, self.local_attn, self.local_attn, self.local_attn, self.global_attn]
+        self.attn_types = block * (config.num_hidden_layers // len(block))
+
         self.layers = nn.ModuleList()
         for i in range(config.num_hidden_layers):
             if config.architecture == gemma_config.Architecture.GEMMA_1:
@@ -122,7 +131,7 @@ class Gemma3Model(nn.Module):
             layer = self.layers[i]
             hidden_states = layer(
                 hidden_states=hidden_states,
-                freqs_cis=freqs_cis[self.attn_type],
+                freqs_cis=freqs_cis[self.attn_types],
                 kv_write_indices=kv_write_indices,
                 kv_cache=kv_caches[i],
                 mask=mask,

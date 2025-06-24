@@ -88,6 +88,14 @@ class Gemma2Model(nn.Module):
         self.config = config
         self.vocab_size = config.vocab_size
 
+        self.global_attn = GemmaAttention(
+            config=config, attn_type=gemma_config.AttentionType.GLOBAL
+        )
+        self.local_attn = GemmaAttention(
+            config=config, attn_type=gemma_config.AttentionType.LOCAL_SLIDING
+        )
+        self.attn_type = [self.local_attn, self.global_attn] * (config.num_hidden_layers // 2)
+
         self.layers = nn.ModuleList()
         for i in range(config.num_hidden_layers):
             if config.architecture == gemma_config.Architecture.GEMMA_1:
