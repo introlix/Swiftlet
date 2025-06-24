@@ -1,323 +1,55 @@
 import os
-import gc
 import json
+import gc
 import torch
 from torch import nn
-import torch.nn.functional as F
 from safetensors.torch import load_file as load_safetensors
-from typing import Tuple, Mapping, List, Union, Optional, Any, Sequence
+from typing import Tuple, List, Mapping, Union, Sequence, Any
 import swiftlet.models.gemma.config as gemma_config
+from swiftlet.models.gemma import tokenizer
+from swiftlet.models.gemma.model import (
+    RMSNorm,
+    GemmaAttention,
+    GemmaMLP,
+    Sampler,
+    precompute_freqs_cis,
+)
 from swiftlet.models.gemma import tokenizer
 from swiftlet.kernels.embedding import Embedding
 
 
-# This is taken from https://github.com/google/gemma_pytorch/blob/main/gemma/model.py#L28
-class Sampler(nn.Module):
-
-    def __init__(self, vocab_size: int, config: gemma_config.GemmaConfig):
-        super().__init__()
-        self.vocab_size = vocab_size
-        self.config = config
-
-    @torch.no_grad()
-    def forward(
-        self,
-        embedding: torch.Tensor,
-        hidden_states: torch.Tensor,
-        output_positions: torch.Tensor,
-        temperatures: Union[torch.Tensor, None],
-        top_ps: torch.Tensor,
-        top_ks: torch.Tensor,
-        embedding_bias: Optional[torch.Tensor] = None,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
-        # Select the last element for each sequence.
-        # (batch_size, input_len, hidden_size) -> (batch_size, hidden_size)
-        hidden_states = hidden_states.index_select(1, output_positions).squeeze(dim=1)
-        logits = torch.matmul(hidden_states, embedding.t())
-        if embedding_bias is not None:
-            logits += embedding_bias
-        if self.config.final_logit_softcapping is not None:
-            logits = logits / self.config.final_logit_softcapping
-            logits = torch.tanh(logits)
-            logits = logits * self.config.final_logit_softcapping
-
-        if temperatures is None:
-            return torch.argmax(logits, dim=-1).squeeze(dim=-1), logits
-
-        # Apply temperature scaling.
-        logits.div_(temperatures.unsqueeze(dim=1))
-
-        # Calculate probabilities with softmax.
-        probs = torch.softmax(logits, dim=-1, dtype=torch.float)
-        probs_sort, probs_idx = torch.sort(probs, dim=-1, descending=True)
-
-        # Apply top-p, top-k.
-        probs_sum = torch.cumsum(probs_sort, dim=-1)
-        top_ps_mask = (probs_sum - probs_sort) > top_ps.unsqueeze(dim=1)
-        probs_sort = torch.where(top_ps_mask, 0, probs_sort)
-
-        top_ks_mask = torch.arange(probs_idx.shape[-1], device=probs_idx.device)
-        top_ks_mask = top_ks_mask.expand(probs_idx.shape[0], -1)
-        top_ks_mask = top_ks_mask >= top_ks.unsqueeze(dim=1)
-        probs_sort = torch.where(top_ks_mask, 0, probs_sort)
-
-        # Re-normalization.
-        probs_sort.div_(probs_sort.sum(dim=-1, keepdim=True))
-        probs = torch.gather(probs_sort, dim=-1, index=torch.argsort(probs_idx, dim=-1))
-
-        next_token_ids = torch.multinomial(
-            probs, num_samples=1, replacement=True
-        ).squeeze(dim=-1)
-        return next_token_ids, logits
-
-
-def precompute_freqs_cis(
-    dim: int, end: int, theta: float = 10000.0, rope_scaling_factor: int = 1
-) -> torch.Tensor:
-    """Precomputes the frequency cis."""
-    freqs = 1.0 / (theta ** (torch.arange(0, dim, 2)[: (dim // 2)].float() / dim))
-    freqs = freqs / rope_scaling_factor
-    t = torch.arange(end, device=freqs.device)
-    freqs = torch.outer(t, freqs).float()
-    freqs_cis = torch.polar(torch.ones_like(freqs), freqs)  # complex64
-    return freqs_cis
-
-
-def apply_rotary_emb(x: torch.Tensor, freqs_cis: torch.Tensor) -> torch.Tensor:
-    """Applies the rotary embedding to the query and key tensors."""
-    x_ = torch.view_as_complex(
-        torch.stack(torch.chunk(x.transpose(1, 2).float(), 2, dim=-1), dim=-1)
-    )
-    x_out = torch.view_as_real(x_ * freqs_cis).type_as(x)
-    x_out = torch.cat(torch.chunk(x_out, 2, dim=-1), dim=-2)
-    x_out = x_out.reshape(x_out.shape[0], x_out.shape[1], x_out.shape[2], -1).transpose(
-        1, 2
-    )
-    return x_out
-
-
-class RMSNorm(torch.nn.Module):
-
-    def __init__(
-        self,
-        dim: int,
-        eps: float = 1e-6,
-        add_unit_offset: bool = True,
-    ):
-        super().__init__()
-        self.eps = eps
-        self.add_unit_offset = add_unit_offset
-        self.weight = nn.Parameter(torch.zeros(dim))
-
-    def _norm(self, x):
-        return x * torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + self.eps)
-
-    def forward(self, x):
-        # Llama does x.to(float16) * w whilst Gemma2 is (x * w).to(float16)
-        # See https://github.com/huggingface/transformers/pull/29402
-        output = self._norm(x.float())
-        if self.add_unit_offset:
-            output = output * (1 + self.weight.float())
-        else:
-            output = output * self.weight.float()
-        return output.type_as(x)
-
-
-class Linear(nn.Module):
-
-    def __init__(self, in_features: int, out_features: int, quant: bool):
-        super().__init__()
-        if quant:
-            self.weight = nn.Parameter(
-                torch.empty((out_features, in_features), dtype=torch.int8),
-                requires_grad=False,
-            )
-            self.weight_scaler = nn.Parameter(torch.Tensor(out_features))
-        else:
-            self.weight = nn.Parameter(
-                torch.empty((out_features, in_features)),
-                requires_grad=False,
-            )
-        self.quant = quant
-
-    def forward(self, x):
-        weight = self.weight
-        if self.quant:
-            weight = weight * self.weight_scaler.unsqueeze(-1)
-        output = F.linear(x, weight)
-        return output
-
-
-class GemmaAttention(nn.Module):
-    def __init__(
-        self,
-        config: gemma_config.GemmaConfig,
-        attn_type: gemma_config.AttentionType,
-    ):
-        super().__init__()
-        self.num_heads = config.num_attention_heads
-        self.num_kv_heads = config.num_key_value_heads
-
-        assert self.num_heads % self.num_kv_heads == 0
-        self.num_queries_per_kv = self.num_heads // self.num_kv_heads
-        self.head_dim = config.head_dim
-
-        self.hidden_size = config.hidden_size
-
-        self.q_size = self.num_heads * self.head_dim
-        self.kv_size = self.num_kv_heads * self.head_dim
-
-        if config.query_pre_attn_scalar is not None:
-            self.scaling = config.query_pre_attn_scalar**-0.5
-        else:
-            self.scaling = self.head_dim**-0.5
-
-        self.qkv_proj = Linear(
-            self.hidden_size,
-            (self.num_heads + 2 * self.num_kv_heads) * self.head_dim,
-            quant=config.quant,
-        )
-        self.o_proj = Linear(
-            self.num_heads * self.head_dim, self.hidden_size, quant=config.quant
-        )
-
-        self.query_norm = (
-            RMSNorm(self.head_dim, eps=config.rms_norm_eps)
-            if config.use_qk_norm
-            else None
-        )
-        self.key_norm = (
-            RMSNorm(self.head_dim, eps=config.rms_norm_eps)
-            if config.use_qk_norm
-            else None
-        )
-
-        self.attn_type = attn_type
-        self.sliding_window_size = config.sliding_window_size
-        self.attn_logit_softcapping = config.attn_logit_softcapping
-
-    def forward(
-        self,
-        hidden_states: torch.Tensor,
-        freqs_cis: torch.Tensor,
-        kv_write_indices: torch.Tensor,
-        kv_cache: Tuple[torch.Tensor, torch.Tensor],
-        mask: torch.Tensor,
-        local_mask: torch.Tensor = None,
-    ) -> torch.Tensor:
-        hidden_states_shape = hidden_states.shape
-        assert len(hidden_states_shape) == 3
-
-        batch_size, input_len, _ = (
-            hidden_states_shape  # [batch_size, input_len, hidden_size]
-        )
-
-        qkv = self.qkv_proj(
-            hidden_states
-        )  # [batch_size, input_len, (num_heads + 2 * num_kv_heads) * head_dim]
-        xq, xk, xv = qkv.split([self.q_size, self.kv_size, self.kv_size], dim=-1)
-
-        xq = xq.view(
-            batch_size, -1, self.num_heads, self.head_dim
-        )  # [batch_size, input_len, n_heads, head_dim]
-        xk = xk.view(
-            batch_size, -1, self.num_kv_heads, self.head_dim
-        )  # [batch_size, input_len, n_local_kv_heads, head_dim]
-        xv = xv.view(
-            batch_size, -1, self.num_kv_heads, self.head_dim
-        )  # [batch_size, input_len, n_local_kv_heads, head_dim]
-
-        if self.query_norm is not None and self.key_norm is not None:
-            xq = self.query_norm(xq)
-            xk = self.key_norm(xk)
-
-        # Apply positional encoding
-        xq = apply_rotary_emb(xq, freqs_cis)
-        xk = apply_rotary_emb(xk, freqs_cis)
-
-        # Write new kv cache.
-        # [batch_size, input_len, n_local_kv_heads, head_dim]
-        k_cache, v_cache = kv_cache
-        k_cache.index_copy_(1, kv_write_indices, xk)
-        v_cache.index_copy_(1, kv_write_indices, xv)
-
-        key = k_cache
-        value = v_cache
-        if self.num_kv_heads != self.num_heads:
-            # [batch_size, max_seq_len, n_local_heads, head_dim]
-            key = torch.repeat_interleave(key, self.num_queries_per_kv, dim=2)
-            value = torch.repeat_interleave(value, self.num_queries_per_kv, dim=2)
-
-        q = xq.transpose(1, 2)  # [batch_size, n_heads, input_len, head_dim]
-        k = key.transpose(1, 2)  # [batch_size, n_heads, seq_len, head_dim]
-        v = value.transpose(1, 2)  # [batch size, n_heads, seq_len, head_dim]
-
-        q.mul_(self.scaling)
-        attn_score = torch.matmul(
-            q, k.transpose(2, 3)
-        )  # [batch_size, n_heads, input_len, head_dim] @ [batch_size, n_heads, head_dim, seq_len] = [batch_size, n_heads, input_len, seq_len]
-
-        if (
-            self.attn_type == gemma_config.AttentionType.LOCAL_SLIDING
-            and self.sliding_window_size is not None
-            and local_mask is not None
-        ):
-            mask = local_mask
-
-        if self.attn_logit_softcapping is not None:
-            attn_score = attn_score / self.attn_logit_softcapping
-            attn_score = torch.tanh(attn_score)
-            attn_score = attn_score * self.attn_logit_softcapping
-
-        attn_score = attn_score + mask
-        attn_score = attn_score.softmax(
-            dim=-1
-        )  # [batch_size, n_heads, input_len, seq_len]
-
-        output = torch.matmul(
-            attn_score, v
-        )  # [batch_size, n_heads, input_len, seq_len] @ [batch size, n_heads, seq_len, head_dim] = [batch_size, n_heads, input_len, head_dim]
-        output = (
-            output.transpose(1, 2).contiguous().view(batch_size, input_len, -1)
-        )  # [batch_size, input_len, n_heads * head_dim]
-
-        output = self.o_proj(output)  # [batch_size, input_len, hidden_size]
-
-        return output
-
-
-class GemmaMLP(nn.Module):
-    def __init__(self, hidden_size: int, intermediate_size: int, quant: bool):
-        super().__init__()
-        self.gate_proj = Linear(hidden_size, intermediate_size, quant)
-        self.up_proj = Linear(hidden_size, intermediate_size, quant)
-        self.down_proj = Linear(intermediate_size, hidden_size, quant)
-
-    def forward(self, x):
-        gate = self.gate_proj(x)
-        gate = F.gelu(gate, approximate="tanh")
-        up = self.up_proj(x)
-        outputs = self.down_proj(gate * up)
-        return outputs
-
-
-class GemmaBlock(nn.Module):
+class Gemma2Block(nn.Module):
     def __init__(self, config: gemma_config.GemmaConfig):
         super().__init__()
 
-        self.attn_type = gemma_config.AttentionType.GLOBAL
+        self.global_attn = GemmaAttention(
+            config=config, attn_type=gemma_config.AttentionType.GLOBAL
+        )
+        self.local_attn = GemmaAttention(
+            config=config, attn_type=gemma_config.AttentionType.LOCAL
+        )
 
-        self.self_attn = GemmaAttention(config=config, attn_type=self.attn_type)
-
+        self.attn_types = [self.local_attn, self.global_attn] * (
+            config.num_hidden_layers // 2
+        )
         self.mlp = GemmaMLP(
             hidden_size=config.hidden_size,
             intermediate_size=config.intermediate_size,
             quant=config.quant,
         )
-
         self.input_layernorm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         self.post_attention_layernorm = RMSNorm(
             config.hidden_size, eps=config.rms_norm_eps
+        )
+        self.pre_feedforward_layernorm = (
+            RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+            if config.use_pre_ffw_norm
+            else None
+        )
+        self.post_feedforward_layernorm = (
+            RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+            if config.use_post_ffw_norm
+            else None
         )
 
     def forward(
@@ -337,18 +69,23 @@ class GemmaBlock(nn.Module):
             kv_write_indices=kv_write_indices,
             kv_cache=kv_cache,
             mask=mask,
+            local_mask=local_mask,
         )
+        hidden_states = self.post_attention_layernorm(hidden_states)
         hidden_states = residual + hidden_states
 
         residual = hidden_states
-        hidden_states = self.post_attention_layernorm(hidden_states)
+        if self.pre_feedforward_layernorm is not None:
+            hidden_states = self.pre_feedforward_layernorm(hidden_states)
         hidden_states = self.mlp(hidden_states)
+        if self.post_feedforward_layernorm is not None:
+            hidden_states = self.post_feedforward_layernorm(hidden_states)
         hidden_states = residual + hidden_states
 
         return hidden_states
 
 
-class GemmaModel(nn.Module):
+class Gemma2Model(nn.Module):
     def __init__(self, config: gemma_config.GemmaConfig):
         super().__init__()
         self.config = config
@@ -357,14 +94,23 @@ class GemmaModel(nn.Module):
         self.layers = nn.ModuleList()
         for i in range(config.num_hidden_layers):
             if config.architecture == gemma_config.Architecture.GEMMA_1:
-                self.layers.append(GemmaBlock(config))
-            elif config.architecture == gemma_config.Architecture.GEMMA_2:
                 raise ValueError(
-                    "Gemma 2 architecture is not supported in this version. Use Gemma2Model instead."
+                    "Gemma architecture is not supported in this version. Use GemmaModel instead."
                 )
+            elif config.architecture == gemma_config.Architecture.GEMMA_2:
+                local_attn = GemmaAttention(
+                    config=config,
+                    attn_type=gemma_config.AttentionType.LOCAL_SLIDING,
+                )
+                global_attn = GemmaAttention(
+                    config=config,
+                    attn_type=gemma_config.AttentionType.GLOBAL,
+                )
+                attn_types = [local_attn, global_attn] * (config.num_hidden_layers // 2)
+                self.layers.append(Gemma2Block(config, attn_types=attn_types))
             elif config.architecture == gemma_config.Architecture.GEMMA_3:
                 raise ValueError(
-                    "Gemma 3 architecture is not supported in this version. Use Gemma3TextModel instead."
+                    "Gemma 3 architecture is not supported in this version. Use Gemma3Model instead."
                 )
             else:
                 raise ValueError(f"Unsupported architecture: {config.architecture}")
@@ -395,7 +141,7 @@ class GemmaModel(nn.Module):
         return hidden_states
 
 
-class GemmaForCausalLM(nn.Module):
+class Gemma2ForCausalLM(nn.Module):
     def __init__(
         self,
         config: gemma_config.GemmaConfig,
@@ -409,7 +155,7 @@ class GemmaForCausalLM(nn.Module):
 
         self.tokenizer = tokenizer.Tokenizer(config.tokenizer)
         self.embedder = Embedding(vocab_size, config.hidden_size, config.quant)
-        self.model = GemmaModel(config)
+        self.model = Gemma2Model(config)
         self.sampler = Sampler(vocab_size, config)
 
         self._register_freqs_cis("freqs_cis", head_dim, max_seq_len)
