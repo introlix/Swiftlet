@@ -98,16 +98,7 @@ class Gemma2Model(nn.Module):
                     "Gemma architecture is not supported in this version. Use GemmaModel instead."
                 )
             elif config.architecture == gemma_config.Architecture.GEMMA_2:
-                local_attn = GemmaAttention(
-                    config=config,
-                    attn_type=gemma_config.AttentionType.LOCAL_SLIDING,
-                )
-                global_attn = GemmaAttention(
-                    config=config,
-                    attn_type=gemma_config.AttentionType.GLOBAL,
-                )
-                attn_types = [local_attn, global_attn] * (config.num_hidden_layers // 2)
-                self.layers.append(Gemma2Block(config, attn_types=attn_types))
+                self.layers.append(Gemma2Block(config))
             elif config.architecture == gemma_config.Architecture.GEMMA_3:
                 raise ValueError(
                     "Gemma 3 architecture is not supported in this version. Use Gemma3Model instead."
