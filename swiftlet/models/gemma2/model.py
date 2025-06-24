@@ -19,16 +19,14 @@ from swiftlet.kernels.embedding import Embedding
 
 
 class Gemma2Block(nn.Module):
-    def __init__(self, config: gemma_config.GemmaConfig):
+    def __init__(self, config: gemma_config.GemmaConfig, attn_type: gemma_config.AttentionType):
         super().__init__()
+        self.attn_type = attn_type
+        self.self_attn = GemmaAttention(
+            config=config,
+            attn_type=self.attn_type,
+        )
 
-        self.global_attn = GemmaAttention(
-            config=config, attn_type=gemma_config.AttentionType.GLOBAL
-        )
-        self.local_attn = GemmaAttention(
-            config=config, attn_type=gemma_config.AttentionType.LOCAL_SLIDING
-        )
-        self.attn_type = [self.local_attn, self.global_attn] * (config.num_hidden_layers // 2)
         self.mlp = GemmaMLP(
             hidden_size=config.hidden_size,
             intermediate_size=config.intermediate_size,
@@ -103,7 +101,12 @@ class Gemma2Model(nn.Module):
                     "Gemma architecture is not supported in this version. Use GemmaModel instead."
                 )
             elif config.architecture == gemma_config.Architecture.GEMMA_2:
-                self.layers.append(Gemma2Block(config))
+                attn_type = (
+                    config.attn_types[i % len(config.attn_types)]
+                    if config.attn_types is not None
+                    else gemma_config.AttentionType.GLOBAL
+                )
+                self.layers.append(Gemma2Block(config, attn_type))
             elif config.architecture == gemma_config.Architecture.GEMMA_3:
                 raise ValueError(
                     "Gemma 3 architecture is not supported in this version. Use Gemma3Model instead."
@@ -126,7 +129,7 @@ class Gemma2Model(nn.Module):
             layer = self.layers[i]
             hidden_states = layer(
                 hidden_states=hidden_states,
-                freqs_cis=freqs_cis[self.attn_type],
+                freqs_cis=freqs_cis.get(layer.attn_type),
                 kv_write_indices=kv_write_indices,
                 kv_cache=kv_caches[i],
                 mask=mask,
