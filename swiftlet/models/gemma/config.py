@@ -5,7 +5,7 @@ import torch
 import enum
 import dataclasses
 from typing import Optional, Sequence
-from swiftlet.models.gemma.image_preprocessor import preprocessor
+from swiftlet.kernels.siglip_vision import preprocessor
 
 class AttentionType(enum.Enum):
     GLOBAL = 1
