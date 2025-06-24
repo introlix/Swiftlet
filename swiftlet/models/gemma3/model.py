@@ -11,17 +11,80 @@ import swiftlet.models.gemma.config as gemma_config
 from swiftlet.models.gemma import tokenizer
 from swiftlet.models.gemma.model import (
     RMSNorm,
-    GemmaAttention,
     Linear,
     Sampler,
     precompute_freqs_cis,
+    GemmaMLP,
+    GemmaAttention,
 )
-from swiftlet.models.gemma2.model import Gemma2Block
 from swiftlet.models.gemma import tokenizer
 from swiftlet.kernels.embedding import Embedding
 from swiftlet.kernels.siglip_vision import siglip_vision_model
 from swiftlet.models.gemma3 import gemma3_preprocessor
 
+class Gemma3Block(nn.Module):
+    def __init__(self, config: gemma_config.GemmaConfig):
+        super().__init__()
+
+        self.global_attn = GemmaAttention(
+            config=config, attn_type=gemma_config.AttentionType.GLOBAL
+        )
+        self.local_attn = GemmaAttention(
+            config=config, attn_type=gemma_config.AttentionType.LOCAL
+        )
+        block = [self.local_attn, self.local_attn, self.local_attn, self.local_attn, self.global_attn]
+        self.attn_types = block * (config.num_hidden_layers // len(block))
+        self.mlp = GemmaMLP(
+            hidden_size=config.hidden_size,
+            intermediate_size=config.intermediate_size,
+            quant=config.quant,
+        )
+        self.input_layernorm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+        self.post_attention_layernorm = RMSNorm(
+            config.hidden_size, eps=config.rms_norm_eps
+        )
+        self.pre_feedforward_layernorm = (
+            RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+            if config.use_pre_ffw_norm
+            else None
+        )
+        self.post_feedforward_layernorm = (
+            RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+            if config.use_post_ffw_norm
+            else None
+        )
+
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        freqs_cis: torch.Tensor,
+        kv_write_indices: torch.Tensor,
+        kv_cache: Tuple[torch.Tensor, torch.Tensor],
+        mask: torch.Tensor,
+        local_mask: torch.Tensor,
+    ) -> torch.Tensor:
+        residual = hidden_states
+        hidden_states = self.input_layernorm(hidden_states)
+        hidden_states = self.self_attn(
+            hidden_states=hidden_states,
+            freqs_cis=freqs_cis,
+            kv_write_indices=kv_write_indices,
+            kv_cache=kv_cache,
+            mask=mask,
+            local_mask=local_mask,
+        )
+        hidden_states = self.post_attention_layernorm(hidden_states)
+        hidden_states = residual + hidden_states
+
+        residual = hidden_states
+        if self.pre_feedforward_layernorm is not None:
+            hidden_states = self.pre_feedforward_layernorm(hidden_states)
+        hidden_states = self.mlp(hidden_states)
+        if self.post_feedforward_layernorm is not None:
+            hidden_states = self.post_feedforward_layernorm(hidden_states)
+        hidden_states = residual + hidden_states
+
+        return hidden_states
 
 class Gemma3Model(nn.Module):
     def __init__(self, config: gemma_config.GemmaConfig):
@@ -40,7 +103,7 @@ class Gemma3Model(nn.Module):
                     "Gemma 3 architecture is not supported in this version. Use Gemma3Model instead."
                 )
             elif config.architecture == gemma_config.Architecture.GEMMA_3:
-                self.layers.append(Gemma2Block(config))
+                self.layers.append(Gemma3Block(config))
             else:
                 raise ValueError(f"Unsupported architecture: {config.architecture}")
 
