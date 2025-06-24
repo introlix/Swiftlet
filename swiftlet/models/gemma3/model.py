@@ -23,17 +23,13 @@ from swiftlet.kernels.siglip_vision import siglip_vision_model
 from swiftlet.models.gemma3 import gemma3_preprocessor
 
 class Gemma3Block(nn.Module):
-    def __init__(self, config: gemma_config.GemmaConfig):
+    def __init__(self, config: gemma_config.GemmaConfig, attn_type: gemma_config.AttentionType):
         super().__init__()
-
-        self.global_attn = GemmaAttention(
-            config=config, attn_type=gemma_config.AttentionType.GLOBAL
+        self.attn_type = attn_type
+        self.self_attn = GemmaAttention(
+            config=config,
+            attn_type=self.attn_type,
         )
-        self.local_attn = GemmaAttention(
-            config=config, attn_type=gemma_config.AttentionType.LOCAL_SLIDING
-        )
-        block = [self.local_attn, self.local_attn, self.local_attn, self.local_attn, self.global_attn]
-        self.attn_types = block * (config.num_hidden_layers // len(block))
         self.mlp = GemmaMLP(
             hidden_size=config.hidden_size,
             intermediate_size=config.intermediate_size,
@@ -92,15 +88,6 @@ class Gemma3Model(nn.Module):
         self.config = config
         self.vocab_size = config.vocab_size
 
-        self.global_attn = GemmaAttention(
-            config=config, attn_type=gemma_config.AttentionType.GLOBAL
-        )
-        self.local_attn = GemmaAttention(
-            config=config, attn_type=gemma_config.AttentionType.LOCAL_SLIDING
-        )
-        block = [self.local_attn, self.local_attn, self.local_attn, self.local_attn, self.global_attn]
-        self.attn_types = block * (config.num_hidden_layers // len(block))
-
         self.layers = nn.ModuleList()
         for i in range(config.num_hidden_layers):
             if config.architecture == gemma_config.Architecture.GEMMA_1:
@@ -112,7 +99,12 @@ class Gemma3Model(nn.Module):
                     "Gemma 3 architecture is not supported in this version. Use Gemma3Model instead."
                 )
             elif config.architecture == gemma_config.Architecture.GEMMA_3:
-                self.layers.append(Gemma3Block(config))
+                attn_type = (
+                    config.attn_types[i % len(config.attn_types)]
+                    if config.attn_types is not None
+                    else gemma_config.AttentionType.GLOBAL
+                )
+                self.layers.append(Gemma3Block(config, attn_type))
             else:
                 raise ValueError(f"Unsupported architecture: {config.architecture}")
 
