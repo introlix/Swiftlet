@@ -21,6 +21,7 @@ from swiftlet.models.gemma import tokenizer
 from swiftlet.kernels.embedding import Embedding
 from swiftlet.kernels.siglip_vision import siglip_vision_model
 from swiftlet.models.gemma3 import gemma3_preprocessor
+from transformers.models.gemma3.modeling_gemma3 import Gemma3Model as Gemma3MModel
 
 class Gemma3Block(nn.Module):
     def __init__(self, config: gemma_config.GemmaConfig, attn_type: gemma_config.AttentionType):
@@ -148,7 +149,7 @@ class Gemma3ForCausalLM(nn.Module):
 
         self.tokenizer = tokenizer.Tokenizer(config.tokenizer)
         self.embedder = Embedding(vocab_size, config.hidden_size, config.quant)
-        self.model = Gemma3Model(config)
+        self.model = Gemma3MModel(config)
         self.sampler = Sampler(vocab_size, config)
 
         if config.rope_wave_length is None:
@@ -451,7 +452,7 @@ class Gemma3ForMultimodalLM(nn.Module):
         self.text_token_embedder = Embedding(
             vocab_size, config.hidden_size, config.quant
         )
-        self.model = Gemma3Model(config)
+        self.model = Gemma3MModel(config)
         self.sampler = Sampler(vocab_size, config)
 
         if config.vision_config is None:

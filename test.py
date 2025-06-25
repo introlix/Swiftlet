@@ -5,16 +5,19 @@ from swiftlet.models.gemma3.model import Gemma3ForCausalLM
 
 gemma3_config = config.get_gemma_config(variant="1b", tokenizer=Tokenizer(model_path="swiftlet/models/gemma/tokenizer.model"))
 
-model = Gemma3ForCausalLM(config)
+model = Gemma3ForCausalLM(gemma3_config)
 
-model.from_pretrained(model_path="")
+# TODO: Replace with the actual path to your model weights
+model.from_pretrained(model_path="path/to/your/model/weights")
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 model.to(device)
 model.eval()
 
+tokenizer = gemma3_config.tokenizer
+
 prompt = "Once upon a time"
-output = model.generate(
+output_ids = model.generate(
     prompts=prompt,
     device=device,
     output_len=50,    # how many tokens to generate
@@ -23,4 +26,7 @@ output = model.generate(
     top_k=50,
 )
 
-print("▶️", output)
+# Decode the generated token IDs into text
+decoded_output = tokenizer.decode(output_ids)
+
+print("▶️", decoded_output)
