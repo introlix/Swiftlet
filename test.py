@@ -27,6 +27,6 @@ output_ids = model.generate(
 )
 
 # Decode the generated token IDs into text
-decoded_output = tokenizer.decode(output_ids)
+decoded_output = tokenizer.decode(output_ids[0])
 
 print("▶️", decoded_output)
