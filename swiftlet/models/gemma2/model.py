@@ -405,6 +405,8 @@ class Gemma2ForCausalLM(nn.Module):
                 strict=False,
             )
 
+            return
+
         # For PyTorch shards + index
         index_file = os.path.join(model_path, "pytorch_model.bin.index.json")
         if os.path.isdir(model_path) and os.path.isfile(index_file):
@@ -420,5 +422,6 @@ class Gemma2ForCausalLM(nn.Module):
                 self.load_state_dict(state_dict, strict=False)
                 del state_dict  # Save memory.
                 gc.collect()
+            return
 
         raise FileNotFoundError(f"No recognized checkpoint files under {model_path}")
