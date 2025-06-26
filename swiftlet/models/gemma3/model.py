@@ -814,66 +814,84 @@ class Gemma3ForMultimodalLM(nn.Module):
 
         return results
 
-    def from_pretrained(self, model_path: str):
-        """Load the model state from a given path."""
-        # --- SINGLE FILE CASES ---
-        # For a single safetensors file
+    def from_pretrained(self, model_path: str, map_location="cpu"):
+        """
+        Load weights from:
+          - a .safetensors file,
+          - a safetensors-sharded folder,
+          - a .ckpt or .bin file,
+          - a PyTorch-sharded folder.
+        Prints missing/unexpected keys and attempts namespace fixes.
+        """
+        def _fix_prefix(state_dict, expected_prefix="model."):
+            # if your safetensors were saved without the "model." prefix,
+            # this will add it so keys match your `state_dict()` keys
+            fixed = {}
+            for k, v in state_dict.items():
+                if not k.startswith(expected_prefix):
+                    new_k = expected_prefix + k
+                else:
+                    new_k = k
+                fixed[new_k] = v
+            return fixed
+
+        def _load_state_dict(sd):
+            # Cast float16→float32 if needed
+            for k, v in sd.items():
+                if v.dtype == torch.float16:
+                    sd[k] = v.to(torch.float32)
+            missing, unexpected = self.load_state_dict(sd, strict=False)
+            print(f"⚠️  Missing keys ({len(missing)}):\n", missing)
+            print(f"⚠️  Unexpected keys ({len(unexpected)}):\n", unexpected)
+            return missing, unexpected
+
+        # 1) Single-file .safetensors
         if os.path.isfile(model_path) and model_path.endswith(".safetensors"):
-            sd = load_safetensors(model_path, device="cpu")
-            self.load_state_dict(sd, strict=False)
-            print("Loaded model from single .safetensors file.")
-            return
+            sd = load_safetensors(model_path, device=map_location)
+            sd = _fix_prefix(sd)
+            return _load_state_dict(sd)
 
-        # For a single PyTorch .bin file
-        if os.path.isfile(model_path) and (model_path.endswith(".bin") or model_path.endswith(".ckpt")):
-            sd = torch.load(model_path, map_location="cpu", weights_only=True)
-            # Handle checkpoints that might be nested
-            if "model_state_dict" in sd:
-                sd = sd["model_state_dict"]
-            self.load_state_dict(sd, strict=False)
-            print("Loaded model from single .bin/.ckpt file.")
-            return
-
-        # --- SHARDED CASES ---
-        # For safetensors shards + index
-        index_file_sf = os.path.join(model_path, "model.safetensors.index.json")
-        if os.path.isdir(model_path) and os.path.isfile(index_file_sf):
-            print("Loading from sharded .safetensors...")
-            with open(index_file_sf, "r", encoding="utf-8") as f:
+        # 2) Sharded safetensors + index
+        index_file = os.path.join(model_path, "model.safetensors.index.json")
+        if os.path.isdir(model_path) and os.path.isfile(index_file):
+            with open(index_file, "r", encoding="utf-8") as f:
                 index = json.load(f)
-
-            shard_files = set(index["weight_map"].values())
-            final_state_dict = {}
-            for shard_file in shard_files:
-                shard_path = os.path.join(model_path, shard_file)
-                shard_state_dict = load_safetensors(shard_path, device="cpu")
-                final_state_dict.update(shard_state_dict)
-                del shard_state_dict # Free memory
+            shards = set(index["weight_map"].values())
+            for shard in shards:
+                shard_path = os.path.join(model_path, shard)
+                sd = load_safetensors(shard_path, device=map_location)
+                sd = _fix_prefix(sd)
+                _load_state_dict(sd)
+                del sd
                 gc.collect()
-
-            self.load_state_dict(final_state_dict, strict=False)
-            print("Finished loading sharded .safetensors.")
             return
 
-        # For PyTorch shards + index
-        index_file_pt = os.path.join(model_path, "pytorch_model.bin.index.json")
-        if os.path.isdir(model_path) and os.path.isfile(index_file_pt):
-            print("Loading from sharded .bin files...")
-            with open(index_file_pt, "r", encoding="utf-8") as f:
+        # 3) Single-file PyTorch .ckpt / .bin
+        if os.path.isfile(model_path):
+            ckpt = torch.load(model_path, map_location=map_location)
+            # some frameworks pack under "model_state_dict", others directly as tensors
+            sd = (
+                ckpt.get("model_state_dict", ckpt)
+                if isinstance(ckpt, dict)
+                else ckpt
+            )
+            return _load_state_dict(sd)
+
+        # 4) Sharded PyTorch + index
+        index_file = os.path.join(model_path, "pytorch_model.bin.index.json")
+        if os.path.isdir(model_path) and os.path.isfile(index_file):
+            with open(index_file, "r", encoding="utf-8") as f:
                 index = json.load(f)
-
-            shard_files = set(index["weight_map"].values())
-            final_state_dict = {}
-            for shard_file in shard_files:
-                shard_path = os.path.join(model_path, shard_file)
-                shard_state_dict = torch.load(shard_path, map_location="cpu", weights_only=True)
-                final_state_dict.update(shard_state_dict)
-                del shard_state_dict # Free memory
+            shards = set(index["weight_map"].values())
+            for shard in shards:
+                shard_path = os.path.join(model_path, shard)
+                sd = torch.load(shard_path, map_location=map_location)
+                sd = sd.get("model_state_dict", sd)
+                sd = _fix_prefix(sd)
+                _load_state_dict(sd)
+                del sd
                 gc.collect()
-
-            self.load_state_dict(final_state_dict, strict=False)
-            print("Finished loading sharded .bin files.")
             return
 
-        raise FileNotFoundError(f"Could not find a valid model file or sharded index at {model_path}")
+        raise ValueError(f"No recognized checkpoint format at '{model_path}'")
 
