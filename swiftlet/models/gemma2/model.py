@@ -424,4 +424,4 @@ class Gemma2ForCausalLM(nn.Module):
                 gc.collect()
             return
 
-        raise FileNotFoundError(f"No recognized checkpoint files under {model_path}")
+

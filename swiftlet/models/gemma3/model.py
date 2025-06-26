@@ -432,7 +432,7 @@ class Gemma3ForCausalLM(nn.Module):
                 gc.collect()
             return
 
-        raise FileNotFoundError(f"No recognized checkpoint files under {model_path}")
+
 
 
 # This is taken from https://github.com/google/gemma_pytorch/blob/main/gemma/gemma3_model.py#L30
@@ -868,4 +868,4 @@ class Gemma3ForMultimodalLM(nn.Module):
                 gc.collect()
             return
 
-        raise FileNotFoundError(f"No recognized checkpoint files under {model_path}")
+
