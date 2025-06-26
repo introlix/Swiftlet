@@ -627,81 +627,89 @@ class GemmaForCausalLM(nn.Module):
 
     def from_pretrained(self, model_path: str, map_location="cpu"):
         """
-        Load weights from:
-          - a .safetensors file,
-          - a safetensors-sharded folder,
-          - a .ckpt or .bin file,
-          - a PyTorch-sharded folder.
-        Prints missing/unexpected keys and attempts namespace fixes.
+        1) Finds either:
+             - a single .safetensors file
+             - a sharded safetensors folder with model.safetensors.index.json
+           Merges all shards into one dict.
+        2) Fixes common prefix mismatches: strips "module.", adds "model.".
+        3) Casts float16 → float32.
+        4) Calls load_state_dict exactly once with strict=False.
+        Falls back to PyTorch .ckpt/.bin (single or sharded) if no safetensors found.
         """
-        def _fix_prefix(state_dict, expected_prefix="model."):
-            # if your safetensors were saved without the "model." prefix,
-            # this will add it so keys match your `state_dict()` keys
+        def _gather_safetensors(files):
+            raw_sd = {}
+            for fpath in files:
+                shard = load_safetensors(fpath, device=map_location)
+                raw_sd.update(shard)
+            return raw_sd
+
+        def _fix_prefixes(sd):
             fixed = {}
-            for k, v in state_dict.items():
-                if not k.startswith(expected_prefix):
-                    new_k = expected_prefix + k
-                else:
-                    new_k = k
+            for k, v in sd.items():
+                new_k = k
+                if new_k.startswith("module."):
+                    new_k = new_k[len("module."):]
+                if not new_k.startswith("model."):
+                    new_k = "model." + new_k
                 fixed[new_k] = v
             return fixed
 
-        def _load_state_dict(sd):
-            # Cast float16→float32 if needed
-            for k, v in sd.items():
-                if v.dtype == torch.float16:
-                    sd[k] = v.to(torch.float32)
-            missing, unexpected = self.load_state_dict(sd, strict=False)
-            print(f"⚠️  Missing keys ({len(missing)}):\n", missing)
-            print(f"⚠️  Unexpected keys ({len(unexpected)}):\n", unexpected)
-            return missing, unexpected
-
-        # 1) Single-file .safetensors
+        # ——— 1) Locate safetensors files ———
+        safefiles = []
         if os.path.isfile(model_path) and model_path.endswith(".safetensors"):
-            sd = load_safetensors(model_path, device=map_location)
-            sd = _fix_prefix(sd)
-            return _load_state_dict(sd)
+            safefiles = [model_path]
+        else:
+            idx = os.path.join(model_path, "model.safetensors.index.json")
+            if os.path.isdir(model_path) and os.path.isfile(idx):
+                with open(idx, "r", encoding="utf-8") as f:
+                    index = json.load(f)
+                safefiles = sorted(
+                    os.path.join(model_path, shard)
+                    for shard in set(index["weight_map"].values())
+                )
 
-        # 2) Sharded safetensors + index
-        index_file = os.path.join(model_path, "model.safetensors.index.json")
-        if os.path.isdir(model_path) and os.path.isfile(index_file):
-            with open(index_file, "r", encoding="utf-8") as f:
-                index = json.load(f)
-            shards = set(index["weight_map"].values())
-            for shard in shards:
-                shard_path = os.path.join(model_path, shard)
-                sd = load_safetensors(shard_path, device=map_location)
-                sd = _fix_prefix(sd)
-                _load_state_dict(sd)
-                del sd
-                gc.collect()
+        # ——— 2) If we found safetensors, merge & load ———
+        if safefiles:
+            raw_sd   = _gather_safetensors(safefiles)
+            if not raw_sd:
+                raise RuntimeError(f"No tensors found in {model_path}")
+            fixed_sd = _fix_prefixes(raw_sd)
+
+            # cast half→float
+            for k, v in fixed_sd.items():
+                if v.dtype == torch.float16:
+                    fixed_sd[k] = v.to(torch.float32)
+
+            missing, unexpected = self.load_state_dict(fixed_sd, strict=False)
+            print(f"✅ Loaded {len(fixed_sd) - len(unexpected)} tensors from safetensors")
+            if missing:
+                print(f"⚠️ Missing keys ({len(missing)}): {missing[:5]} …")
+            if unexpected:
+                print(f"⚠️ Unexpected keys ({len(unexpected)}): {unexpected[:5]} …")
             return
 
-        # 3) Single-file PyTorch .ckpt / .bin
+        # ——— 3) Fallback: PyTorch single-file .ckpt/.bin ———
         if os.path.isfile(model_path):
             ckpt = torch.load(model_path, map_location=map_location)
-            # some frameworks pack under "model_state_dict", others directly as tensors
-            sd = (
-                ckpt.get("model_state_dict", ckpt)
-                if isinstance(ckpt, dict)
-                else ckpt
-            )
-            return _load_state_dict(sd)
-
-        # 4) Sharded PyTorch + index
-        index_file = os.path.join(model_path, "pytorch_model.bin.index.json")
-        if os.path.isdir(model_path) and os.path.isfile(index_file):
-            with open(index_file, "r", encoding="utf-8") as f:
-                index = json.load(f)
-            shards = set(index["weight_map"].values())
-            for shard in shards:
-                shard_path = os.path.join(model_path, shard)
-                sd = torch.load(shard_path, map_location=map_location)
-                sd = sd.get("model_state_dict", sd)
-                sd = _fix_prefix(sd)
-                _load_state_dict(sd)
-                del sd
-                gc.collect()
+            sd   = ckpt.get("model_state_dict", ckpt) if isinstance(ckpt, dict) else ckpt
+            missing, unexpected = self.load_state_dict(sd, strict=False)
+            print(f"✅ Loaded PyTorch checkpoint, missing={len(missing)}, unexpected={len(unexpected)}")
             return
 
-        raise ValueError(f"No recognized checkpoint format at '{model_path}'")
+        # ——— 4) Fallback: PyTorch sharded folder ———
+        idx2 = os.path.join(model_path, "pytorch_model.bin.index.json")
+        if os.path.isdir(model_path) and os.path.isfile(idx2):
+            with open(idx2, "r", encoding="utf-8") as f:
+                index = json.load(f)
+            all_sd = {}
+            for shard in set(index["weight_map"].values()):
+                part = torch.load(os.path.join(model_path, shard), map_location=map_location)
+                part_sd = part.get("model_state_dict", part)
+                all_sd.update(part_sd)
+                del part, part_sd
+                gc.collect()
+            missing, unexpected = self.load_state_dict(all_sd, strict=False)
+            print(f"✅ Loaded sharded PyTorch checkpoint, missing={len(missing)}, unexpected={len(unexpected)}")
+            return
+
+        raise FileNotFoundError(f"No checkpoint found at '{model_path}'")
