@@ -627,56 +627,63 @@ class GemmaForCausalLM(nn.Module):
 
     def from_pretrained(self, model_path: str):
         """Load the model state from a given path."""
-
-        # For safetensors
+        # --- SINGLE FILE CASES ---
+        # For a single safetensors file
         if os.path.isfile(model_path) and model_path.endswith(".safetensors"):
             sd = load_safetensors(model_path, device="cpu")
             self.load_state_dict(sd, strict=False)
+            print("Loaded model from single .safetensors file.")
             return
 
-        # for safetensors shards + index
-        index_file = os.path.join(model_path, "model.safetensors.index.json")
-        if os.path.isdir(model_path) and os.path.isfile(index_file):
-            with open(index_file, "r", encoding="utf-8") as f:
+        # For a single PyTorch .bin file
+        if os.path.isfile(model_path) and (model_path.endswith(".bin") or model_path.endswith(".ckpt")):
+            sd = torch.load(model_path, map_location="cpu", weights_only=True)
+            # Handle checkpoints that might be nested
+            if "model_state_dict" in sd:
+                sd = sd["model_state_dict"]
+            self.load_state_dict(sd, strict=False)
+            print("Loaded model from single .bin/.ckpt file.")
+            return
+
+        # --- SHARDED CASES ---
+        # For safetensors shards + index
+        index_file_sf = os.path.join(model_path, "model.safetensors.index.json")
+        if os.path.isdir(model_path) and os.path.isfile(index_file_sf):
+            print("Loading from sharded .safetensors...")
+            with open(index_file_sf, "r", encoding="utf-8") as f:
                 index = json.load(f)
-            # The index maps tensor names to shard filenames
-            shards = set(index["weight_map"].values())
-            for shard in shards:
-                shard_path = os.path.join(model_path, shard)
-                sd = load_safetensors(shard_path, device="cpu")
-                self.load_state_dict(sd, strict=False)
-                del sd
+
+            shard_files = set(index["weight_map"].values())
+            final_state_dict = {}
+            for shard_file in shard_files:
+                shard_path = os.path.join(model_path, shard_file)
+                shard_state_dict = load_safetensors(shard_path, device="cpu")
+                final_state_dict.update(shard_state_dict)
+                del shard_state_dict # Free memory
                 gc.collect()
-            return
 
-        # For PyTorch .bin files
-        if os.path.isfile(model_path):
-            self.load_state_dict(
-                torch.load(
-                    model_path,
-                    mmap=True,
-                    weights_only=True,
-                )["model_state_dict"],
-                strict=False,
-            )
-
+            self.load_state_dict(final_state_dict, strict=False)
+            print("Finished loading sharded .safetensors.")
             return
 
         # For PyTorch shards + index
-        index_file = os.path.join(model_path, "pytorch_model.bin.index.json")
-        if os.path.isdir(model_path) and os.path.isfile(index_file):
-            index_path = os.path.join(model_path, "pytorch_model.bin.index.json")
-            with open(index_path, "r", encoding="utf-8") as f:
+        index_file_pt = os.path.join(model_path, "pytorch_model.bin.index.json")
+        if os.path.isdir(model_path) and os.path.isfile(index_file_pt):
+            print("Loading from sharded .bin files...")
+            with open(index_file_pt, "r", encoding="utf-8") as f:
                 index = json.load(f)
-            shard_files = list(set(index["weight_map"].values()))
+
+            shard_files = set(index["weight_map"].values())
+            final_state_dict = {}
             for shard_file in shard_files:
                 shard_path = os.path.join(model_path, shard_file)
-                state_dict = torch.load(
-                    shard_path, map_location="cpu", weights_only=True
-                )
-                self.load_state_dict(state_dict, strict=False)
-                del state_dict  # Save memory.
+                shard_state_dict = torch.load(shard_path, map_location="cpu", weights_only=True)
+                final_state_dict.update(shard_state_dict)
+                del shard_state_dict # Free memory
                 gc.collect()
+
+            self.load_state_dict(final_state_dict, strict=False)
+            print("Finished loading sharded .bin files.")
             return
 
-
+        raise FileNotFoundError(f"Could not find a valid model file or sharded index at {model_path}")
