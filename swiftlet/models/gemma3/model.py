@@ -392,72 +392,30 @@ class Gemma3ForCausalLM(nn.Module):
                 with open(idx, "r", encoding="utf-8") as f:
                     index = json.load(f)
                 return sorted(
-                    os.path.join(path, shard)
-                    for shard in set(index["weight_map"].values())
+                    os.path.join(path, shard) for shard in set(index["weight_map"].values())
                 )
             if os.path.isdir(path):
-                return sorted(
-                    [
-                        os.path.join(path, f)
-                        for f in os.listdir(path)
-                        if f.endswith(".safetensors")
-                    ]
-                )
+                return sorted([
+                    os.path.join(path, f)
+                    for f in os.listdir(path) if f.endswith(".safetensors")
+                ])
             return []
 
-        def _remap_hf_keys_to_custom(raw):
-            """Remap HuggingFace-like keys to your model's expected keys."""
-            fixed = {}
-
+        def _remap_keys_if_needed(raw):
+            """Strip 'model.' prefix from keys if needed."""
+            remapped = {}
             for k, v in raw.items():
-                # Base remapping
                 new_k = k
-
-                if new_k.startswith("model.embed_tokens."):
-                    new_k = new_k.replace("model.embed_tokens.", "embedder.")
-
-                if "self_attn" in new_k:
-                    # q_proj, k_proj, v_proj → we'll fuse them later
-                    if new_k.endswith("q_proj.weight"):
-                        fixed.setdefault(k.split(".self_attn.")[0] + ".self_attn.q", v)
-                        continue
-                    if new_k.endswith("k_proj.weight"):
-                        fixed.setdefault(k.split(".self_attn.")[0] + ".self_attn.k", v)
-                        continue
-                    if new_k.endswith("v_proj.weight"):
-                        fixed.setdefault(k.split(".self_attn.")[0] + ".self_attn.v", v)
-                        continue
-
-                    # query_norm → q_norm
-                    new_k = new_k.replace("q_norm", "query_norm")
-                    new_k = new_k.replace("k_norm", "key_norm")
-                    new_k = new_k.replace("v_norm", "value_norm")
-
-                # Remove any unnecessary prefixes like "model."
+                # If keys start with 'model.', remove it
                 if new_k.startswith("model."):
-                    new_k = new_k[len("model.") :]
+                    new_k = new_k[len("model."):]
+                remapped[new_k] = v
 
-                fixed[new_k] = v
-
-            # Fuse Q/K/V for each layer into qkv_proj
-            fused = {}
-            for k in list(fixed.keys()):
-                if k.endswith(".self_attn.q"):
-                    base = k[: -len(".q")]
-                    q = fixed.pop(base + ".q")
-                    k_ = fixed.pop(base + ".k")
-                    v = fixed.pop(base + ".v")
-                    qkv = torch.cat([q, k_, v], dim=0)  # adjust dim if needed
-                    fused[base + ".qkv_proj.weight"] = qkv
-
-            fixed.update(fused)
-
-            # Cast float16 → float32
-            for k, v in fixed.items():
+            # Cast float16 → float32 if needed
+            for k, v in remapped.items():
                 if v.dtype == torch.float16:
-                    fixed[k] = v.to(torch.float32)
-
-            return fixed
+                    remapped[k] = v.to(torch.float32)
+            return remapped
 
         # ——— Try safetensors first ———
         safefiles = _collect_safetensors_files(model_path)
@@ -467,11 +425,9 @@ class Gemma3ForCausalLM(nn.Module):
                 raw.update(load_safetensors(f, device=map_location))
 
             if not raw:
-                raise RuntimeError(
-                    f"Found safetensors files but no tensors were loaded from {model_path!r}"
-                )
+                raise RuntimeError(f"Found safetensors files but no tensors were loaded from {model_path!r}")
 
-            sd = _remap_hf_keys_to_custom(raw)
+            sd = _remap_keys_if_needed(raw)
             missing, unexpected = self.load_state_dict(sd, strict=False)
             print(f"✅ Loaded {len(sd) - len(unexpected)} tensors from safetensors")
             if missing:
@@ -485,9 +441,7 @@ class Gemma3ForCausalLM(nn.Module):
             ckpt = torch.load(model_path, map_location=map_location)
             sd = ckpt.get("model_state_dict", ckpt) if isinstance(ckpt, dict) else ckpt
             missing, unexpected = self.load_state_dict(sd, strict=False)
-            print(
-                f"✅ Loaded PyTorch checkpoint, missing={len(missing)}, unexpected={len(unexpected)}"
-            )
+            print(f"✅ Loaded PyTorch checkpoint, missing={len(missing)}, unexpected={len(unexpected)}")
             return
 
         # ——— Fallback: sharded PyTorch folder ———
@@ -497,17 +451,13 @@ class Gemma3ForCausalLM(nn.Module):
                 index = json.load(f)
             all_sd = {}
             for shard in set(index["weight_map"].values()):
-                part = torch.load(
-                    os.path.join(model_path, shard), map_location=map_location
-                )
+                part = torch.load(os.path.join(model_path, shard), map_location=map_location)
                 part_sd = part.get("model_state_dict", part)
                 all_sd.update(part_sd)
                 del part, part_sd
                 gc.collect()
             missing, unexpected = self.load_state_dict(all_sd, strict=False)
-            print(
-                f"✅ Loaded sharded PyTorch checkpoint, missing={len(missing)}, unexpected={len(unexpected)}"
-            )
+            print(f"✅ Loaded sharded PyTorch checkpoint, missing={len(missing)}, unexpected={len(unexpected)}")
             return
 
         raise FileNotFoundError(f"No checkpoint found at '{model_path}'")
@@ -902,72 +852,30 @@ class Gemma3ForMultimodalLM(nn.Module):
                 with open(idx, "r", encoding="utf-8") as f:
                     index = json.load(f)
                 return sorted(
-                    os.path.join(path, shard)
-                    for shard in set(index["weight_map"].values())
+                    os.path.join(path, shard) for shard in set(index["weight_map"].values())
                 )
             if os.path.isdir(path):
-                return sorted(
-                    [
-                        os.path.join(path, f)
-                        for f in os.listdir(path)
-                        if f.endswith(".safetensors")
-                    ]
-                )
+                return sorted([
+                    os.path.join(path, f)
+                    for f in os.listdir(path) if f.endswith(".safetensors")
+                ])
             return []
 
-        def _remap_hf_keys_to_custom(raw):
-            """Remap HuggingFace-like keys to your model's expected keys."""
-            fixed = {}
-
+        def _remap_keys_if_needed(raw):
+            """Strip 'model.' prefix from keys if needed."""
+            remapped = {}
             for k, v in raw.items():
-                # Base remapping
                 new_k = k
-
-                if new_k.startswith("model.embed_tokens."):
-                    new_k = new_k.replace("model.embed_tokens.", "embedder.")
-
-                if "self_attn" in new_k:
-                    # q_proj, k_proj, v_proj → we'll fuse them later
-                    if new_k.endswith("q_proj.weight"):
-                        fixed.setdefault(k.split(".self_attn.")[0] + ".self_attn.q", v)
-                        continue
-                    if new_k.endswith("k_proj.weight"):
-                        fixed.setdefault(k.split(".self_attn.")[0] + ".self_attn.k", v)
-                        continue
-                    if new_k.endswith("v_proj.weight"):
-                        fixed.setdefault(k.split(".self_attn.")[0] + ".self_attn.v", v)
-                        continue
-
-                    # query_norm → q_norm
-                    new_k = new_k.replace("q_norm", "query_norm")
-                    new_k = new_k.replace("k_norm", "key_norm")
-                    new_k = new_k.replace("v_norm", "value_norm")
-
-                # Remove any unnecessary prefixes like "model."
+                # If keys start with 'model.', remove it
                 if new_k.startswith("model."):
-                    new_k = new_k[len("model.") :]
+                    new_k = new_k[len("model."):]
+                remapped[new_k] = v
 
-                fixed[new_k] = v
-
-            # Fuse Q/K/V for each layer into qkv_proj
-            fused = {}
-            for k in list(fixed.keys()):
-                if k.endswith(".self_attn.q"):
-                    base = k[: -len(".q")]
-                    q = fixed.pop(base + ".q")
-                    k_ = fixed.pop(base + ".k")
-                    v = fixed.pop(base + ".v")
-                    qkv = torch.cat([q, k_, v], dim=0)  # adjust dim if needed
-                    fused[base + ".qkv_proj.weight"] = qkv
-
-            fixed.update(fused)
-
-            # Cast float16 → float32
-            for k, v in fixed.items():
+            # Cast float16 → float32 if needed
+            for k, v in remapped.items():
                 if v.dtype == torch.float16:
-                    fixed[k] = v.to(torch.float32)
-
-            return fixed
+                    remapped[k] = v.to(torch.float32)
+            return remapped
 
         # ——— Try safetensors first ———
         safefiles = _collect_safetensors_files(model_path)
@@ -977,11 +885,9 @@ class Gemma3ForMultimodalLM(nn.Module):
                 raw.update(load_safetensors(f, device=map_location))
 
             if not raw:
-                raise RuntimeError(
-                    f"Found safetensors files but no tensors were loaded from {model_path!r}"
-                )
+                raise RuntimeError(f"Found safetensors files but no tensors were loaded from {model_path!r}")
 
-            sd = _remap_hf_keys_to_custom(raw)
+            sd = _remap_keys_if_needed(raw)
             missing, unexpected = self.load_state_dict(sd, strict=False)
             print(f"✅ Loaded {len(sd) - len(unexpected)} tensors from safetensors")
             if missing:
@@ -995,9 +901,7 @@ class Gemma3ForMultimodalLM(nn.Module):
             ckpt = torch.load(model_path, map_location=map_location)
             sd = ckpt.get("model_state_dict", ckpt) if isinstance(ckpt, dict) else ckpt
             missing, unexpected = self.load_state_dict(sd, strict=False)
-            print(
-                f"✅ Loaded PyTorch checkpoint, missing={len(missing)}, unexpected={len(unexpected)}"
-            )
+            print(f"✅ Loaded PyTorch checkpoint, missing={len(missing)}, unexpected={len(unexpected)}")
             return
 
         # ——— Fallback: sharded PyTorch folder ———
@@ -1007,17 +911,13 @@ class Gemma3ForMultimodalLM(nn.Module):
                 index = json.load(f)
             all_sd = {}
             for shard in set(index["weight_map"].values()):
-                part = torch.load(
-                    os.path.join(model_path, shard), map_location=map_location
-                )
+                part = torch.load(os.path.join(model_path, shard), map_location=map_location)
                 part_sd = part.get("model_state_dict", part)
                 all_sd.update(part_sd)
                 del part, part_sd
                 gc.collect()
             missing, unexpected = self.load_state_dict(all_sd, strict=False)
-            print(
-                f"✅ Loaded sharded PyTorch checkpoint, missing={len(missing)}, unexpected={len(unexpected)}"
-            )
+            print(f"✅ Loaded sharded PyTorch checkpoint, missing={len(missing)}, unexpected={len(unexpected)}")
             return
 
         raise FileNotFoundError(f"No checkpoint found at '{model_path}'")
