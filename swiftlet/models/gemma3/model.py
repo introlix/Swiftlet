@@ -404,53 +404,109 @@ class Gemma3ForCausalLM(nn.Module):
         def _map_gemma3_keys(hf_key):
             """Map HuggingFace Gemma3 keys to your custom implementation keys."""
             
-            # Embedding layer mapping
-            if hf_key == "embed_tokens.weight":
-                return "embedder.weight"
-            
-            # Output layer mapping
-            if hf_key == "norm.weight":
-                return "norm.weight"  # Adjust if your final norm has different name
-            
-            # Layer-specific mappings
-            if hf_key.startswith("layers."):
-                # Extract layer number
-                parts = hf_key.split(".")
-                layer_idx = parts[1]
+            # Handle keys that already have 'model.' prefix
+            if hf_key.startswith("model."):
+                stripped_key = hf_key[6:]  # Remove "model." prefix
                 
-                # Input layer norm
-                if hf_key.endswith("input_layernorm.weight"):
-                    return f"model.layers.{layer_idx}.input_layernorm.weight"
+                # Embedding layer mapping
+                if stripped_key == "embed_tokens.weight":
+                    return "embedder.weight"
                 
-                # Post attention layer norm
-                if hf_key.endswith("post_attention_layernorm.weight"):
-                    return f"model.layers.{layer_idx}.post_attention_layernorm.weight"
+                # Output layer mapping
+                if stripped_key == "norm.weight":
+                    return "norm.weight"
                 
-                # Attention projections
-                if "self_attn" in hf_key:
-                    if hf_key.endswith("q_proj.weight"):
-                        # For QKV combined projection, you might need to handle this differently
-                        return f"model.layers.{layer_idx}.self_attn.q_proj.weight"
-                    elif hf_key.endswith("k_proj.weight"):
-                        return f"model.layers.{layer_idx}.self_attn.k_proj.weight"
-                    elif hf_key.endswith("v_proj.weight"):
-                        return f"model.layers.{layer_idx}.self_attn.v_proj.weight"
-                    elif hf_key.endswith("o_proj.weight"):
-                        return f"model.layers.{layer_idx}.self_attn.o_proj.weight"
+                # Layer-specific mappings
+                if stripped_key.startswith("layers."):
+                    parts = stripped_key.split(".")
+                    layer_idx = parts[1]
                     
-                    # If your implementation uses combined QKV projection
-                    if any(x in hf_key for x in ["q_proj", "k_proj", "v_proj"]):
-                        # You might need to combine these - see _combine_qkv_weights below
-                        return None  # Handle specially
+                    # Input layer norm
+                    if stripped_key.endswith("input_layernorm.weight"):
+                        return f"model.layers.{layer_idx}.input_layernorm.weight"
+                    
+                    # Post attention layer norm
+                    if stripped_key.endswith("post_attention_layernorm.weight"):
+                        return f"model.layers.{layer_idx}.post_attention_layernorm.weight"
+                    
+                    # Attention projections
+                    if "self_attn" in stripped_key:
+                        if stripped_key.endswith("o_proj.weight"):
+                            return f"model.layers.{layer_idx}.self_attn.o_proj.weight"
+                        elif stripped_key.endswith("qkv_proj.weight"):
+                            return f"model.layers.{layer_idx}.self_attn.qkv_proj.weight"
+                        # Query and Key norm mappings
+                        elif stripped_key.endswith("q_norm.weight"):
+                            return f"model.layers.{layer_idx}.self_attn.query_norm.weight"
+                        elif stripped_key.endswith("k_norm.weight"):
+                            return f"model.layers.{layer_idx}.self_attn.key_norm.weight"
+                        # Individual Q, K, V projections (if they exist)
+                        elif stripped_key.endswith("q_proj.weight"):
+                            return f"model.layers.{layer_idx}.self_attn.q_proj.weight"
+                        elif stripped_key.endswith("k_proj.weight"):
+                            return f"model.layers.{layer_idx}.self_attn.k_proj.weight"
+                        elif stripped_key.endswith("v_proj.weight"):
+                            return f"model.layers.{layer_idx}.self_attn.v_proj.weight"
+                    
+                    # MLP projections
+                    if "mlp" in stripped_key:
+                        if stripped_key.endswith("gate_proj.weight"):
+                            return f"model.layers.{layer_idx}.mlp.gate_proj.weight"
+                        elif stripped_key.endswith("up_proj.weight"):
+                            return f"model.layers.{layer_idx}.mlp.up_proj.weight"
+                        elif stripped_key.endswith("down_proj.weight"):
+                            return f"model.layers.{layer_idx}.mlp.down_proj.weight"
+            
+            # Handle keys without 'model.' prefix (original HF format)
+            else:
+                # Embedding layer mapping
+                if hf_key == "embed_tokens.weight":
+                    return "embedder.weight"
                 
-                # MLP projections
-                if "mlp" in hf_key:
-                    if hf_key.endswith("gate_proj.weight"):
-                        return f"model.layers.{layer_idx}.mlp.gate_proj.weight"
-                    elif hf_key.endswith("up_proj.weight"):
-                        return f"model.layers.{layer_idx}.mlp.up_proj.weight"
-                    elif hf_key.endswith("down_proj.weight"):
-                        return f"model.layers.{layer_idx}.mlp.down_proj.weight"
+                # Output layer mapping
+                if hf_key == "norm.weight":
+                    return "norm.weight"
+                
+                # Layer-specific mappings
+                if hf_key.startswith("layers."):
+                    parts = hf_key.split(".")
+                    layer_idx = parts[1]
+                    
+                    # Input layer norm
+                    if hf_key.endswith("input_layernorm.weight"):
+                        return f"model.layers.{layer_idx}.input_layernorm.weight"
+                    
+                    # Post attention layer norm
+                    if hf_key.endswith("post_attention_layernorm.weight"):
+                        return f"model.layers.{layer_idx}.post_attention_layernorm.weight"
+                    
+                    # Attention projections
+                    if "self_attn" in hf_key:
+                        if hf_key.endswith("o_proj.weight"):
+                            return f"model.layers.{layer_idx}.self_attn.o_proj.weight"
+                        elif hf_key.endswith("qkv_proj.weight"):
+                            return f"model.layers.{layer_idx}.self_attn.qkv_proj.weight"
+                        # Query and Key norm mappings
+                        elif hf_key.endswith("q_norm.weight"):
+                            return f"model.layers.{layer_idx}.self_attn.query_norm.weight"
+                        elif hf_key.endswith("k_norm.weight"):
+                            return f"model.layers.{layer_idx}.self_attn.key_norm.weight"
+                        # Individual Q, K, V projections
+                        elif hf_key.endswith("q_proj.weight"):
+                            return f"model.layers.{layer_idx}.self_attn.q_proj.weight"
+                        elif hf_key.endswith("k_proj.weight"):
+                            return f"model.layers.{layer_idx}.self_attn.k_proj.weight"
+                        elif hf_key.endswith("v_proj.weight"):
+                            return f"model.layers.{layer_idx}.self_attn.v_proj.weight"
+                    
+                    # MLP projections
+                    if "mlp" in hf_key:
+                        if hf_key.endswith("gate_proj.weight"):
+                            return f"model.layers.{layer_idx}.mlp.gate_proj.weight"
+                        elif hf_key.endswith("up_proj.weight"):
+                            return f"model.layers.{layer_idx}.mlp.up_proj.weight"
+                        elif hf_key.endswith("down_proj.weight"):
+                            return f"model.layers.{layer_idx}.mlp.down_proj.weight"
             
             # If no mapping found, return original key
             return hf_key
@@ -494,33 +550,35 @@ class Gemma3ForCausalLM(nn.Module):
             remapped = {}
             unmapped_qkv = {}
             
+            print(f"Sample raw keys: {list(raw.keys())[:10]}")
+            
             for k, v in raw.items():
                 # Convert to float32 if needed
                 if v.dtype == torch.float16:
                     v = v.to(torch.float32)
                 
+                # Skip the malformed key
+                if k == "model.layers.layers.self_attn.qkv_proj.weight":
+                    print(f"⚠️ Skipping malformed key: {k}")
+                    continue
+                
                 # Check if this is a QKV weight that needs special handling
                 if ("self_attn" in k and any(proj in k for proj in ["q_proj", "k_proj", "v_proj"]) 
-                    and hasattr(self, 'model') and hasattr(self.model, 'layers')):
-                    # Check if your model uses combined QKV projection
-                    layer_idx = k.split(".")[1] if "layers." in k else "0"
-                    try:
-                        # Try to access the layer to see if it has qkv_proj
-                        sample_layer = self.model.layers[0] if hasattr(self.model, 'layers') else None
-                        if sample_layer and hasattr(sample_layer.self_attn, 'qkv_proj'):
-                            unmapped_qkv[k] = v
-                            continue
-                    except:
-                        pass
+                    and not k.endswith("qkv_proj.weight")):
+                    # This is a separate Q/K/V projection - might need combining
+                    unmapped_qkv[k] = v
+                    continue
                 
                 new_key = _map_gemma3_keys(k)
                 if new_key and new_key != k:
                     remapped[new_key] = v
+                    print(f"Mapped: {k} -> {new_key}")
                 elif new_key:
                     remapped[k] = v
             
             # Handle QKV combination if needed
             if unmapped_qkv:
+                print(f"Processing {len(unmapped_qkv)} separate QKV weights")
                 qkv_combined = _combine_qkv_weights(unmapped_qkv)
                 remapped.update(qkv_combined)
             
@@ -596,8 +654,6 @@ class Gemma3ForCausalLM(nn.Module):
             return
 
         raise FileNotFoundError(f"No checkpoint found at '{model_path}'")
-
-
 
 
 # This is taken from https://github.com/google/gemma_pytorch/blob/main/gemma/gemma3_model.py#L30
@@ -1001,53 +1057,109 @@ class Gemma3ForMultimodalLM(nn.Module):
         def _map_gemma3_keys(hf_key):
             """Map HuggingFace Gemma3 keys to your custom implementation keys."""
             
-            # Embedding layer mapping
-            if hf_key == "embed_tokens.weight":
-                return "embedder.weight"
-            
-            # Output layer mapping
-            if hf_key == "norm.weight":
-                return "norm.weight"  # Adjust if your final norm has different name
-            
-            # Layer-specific mappings
-            if hf_key.startswith("layers."):
-                # Extract layer number
-                parts = hf_key.split(".")
-                layer_idx = parts[1]
+            # Handle keys that already have 'model.' prefix
+            if hf_key.startswith("model."):
+                stripped_key = hf_key[6:]  # Remove "model." prefix
                 
-                # Input layer norm
-                if hf_key.endswith("input_layernorm.weight"):
-                    return f"model.layers.{layer_idx}.input_layernorm.weight"
+                # Embedding layer mapping
+                if stripped_key == "embed_tokens.weight":
+                    return "embedder.weight"
                 
-                # Post attention layer norm
-                if hf_key.endswith("post_attention_layernorm.weight"):
-                    return f"model.layers.{layer_idx}.post_attention_layernorm.weight"
+                # Output layer mapping
+                if stripped_key == "norm.weight":
+                    return "norm.weight"
                 
-                # Attention projections
-                if "self_attn" in hf_key:
-                    if hf_key.endswith("q_proj.weight"):
-                        # For QKV combined projection, you might need to handle this differently
-                        return f"model.layers.{layer_idx}.self_attn.q_proj.weight"
-                    elif hf_key.endswith("k_proj.weight"):
-                        return f"model.layers.{layer_idx}.self_attn.k_proj.weight"
-                    elif hf_key.endswith("v_proj.weight"):
-                        return f"model.layers.{layer_idx}.self_attn.v_proj.weight"
-                    elif hf_key.endswith("o_proj.weight"):
-                        return f"model.layers.{layer_idx}.self_attn.o_proj.weight"
+                # Layer-specific mappings
+                if stripped_key.startswith("layers."):
+                    parts = stripped_key.split(".")
+                    layer_idx = parts[1]
                     
-                    # If your implementation uses combined QKV projection
-                    if any(x in hf_key for x in ["q_proj", "k_proj", "v_proj"]):
-                        # You might need to combine these - see _combine_qkv_weights below
-                        return None  # Handle specially
+                    # Input layer norm
+                    if stripped_key.endswith("input_layernorm.weight"):
+                        return f"model.layers.{layer_idx}.input_layernorm.weight"
+                    
+                    # Post attention layer norm
+                    if stripped_key.endswith("post_attention_layernorm.weight"):
+                        return f"model.layers.{layer_idx}.post_attention_layernorm.weight"
+                    
+                    # Attention projections
+                    if "self_attn" in stripped_key:
+                        if stripped_key.endswith("o_proj.weight"):
+                            return f"model.layers.{layer_idx}.self_attn.o_proj.weight"
+                        elif stripped_key.endswith("qkv_proj.weight"):
+                            return f"model.layers.{layer_idx}.self_attn.qkv_proj.weight"
+                        # Query and Key norm mappings
+                        elif stripped_key.endswith("q_norm.weight"):
+                            return f"model.layers.{layer_idx}.self_attn.query_norm.weight"
+                        elif stripped_key.endswith("k_norm.weight"):
+                            return f"model.layers.{layer_idx}.self_attn.key_norm.weight"
+                        # Individual Q, K, V projections (if they exist)
+                        elif stripped_key.endswith("q_proj.weight"):
+                            return f"model.layers.{layer_idx}.self_attn.q_proj.weight"
+                        elif stripped_key.endswith("k_proj.weight"):
+                            return f"model.layers.{layer_idx}.self_attn.k_proj.weight"
+                        elif stripped_key.endswith("v_proj.weight"):
+                            return f"model.layers.{layer_idx}.self_attn.v_proj.weight"
+                    
+                    # MLP projections
+                    if "mlp" in stripped_key:
+                        if stripped_key.endswith("gate_proj.weight"):
+                            return f"model.layers.{layer_idx}.mlp.gate_proj.weight"
+                        elif stripped_key.endswith("up_proj.weight"):
+                            return f"model.layers.{layer_idx}.mlp.up_proj.weight"
+                        elif stripped_key.endswith("down_proj.weight"):
+                            return f"model.layers.{layer_idx}.mlp.down_proj.weight"
+            
+            # Handle keys without 'model.' prefix (original HF format)
+            else:
+                # Embedding layer mapping
+                if hf_key == "embed_tokens.weight":
+                    return "embedder.weight"
                 
-                # MLP projections
-                if "mlp" in hf_key:
-                    if hf_key.endswith("gate_proj.weight"):
-                        return f"model.layers.{layer_idx}.mlp.gate_proj.weight"
-                    elif hf_key.endswith("up_proj.weight"):
-                        return f"model.layers.{layer_idx}.mlp.up_proj.weight"
-                    elif hf_key.endswith("down_proj.weight"):
-                        return f"model.layers.{layer_idx}.mlp.down_proj.weight"
+                # Output layer mapping
+                if hf_key == "norm.weight":
+                    return "norm.weight"
+                
+                # Layer-specific mappings
+                if hf_key.startswith("layers."):
+                    parts = hf_key.split(".")
+                    layer_idx = parts[1]
+                    
+                    # Input layer norm
+                    if hf_key.endswith("input_layernorm.weight"):
+                        return f"model.layers.{layer_idx}.input_layernorm.weight"
+                    
+                    # Post attention layer norm
+                    if hf_key.endswith("post_attention_layernorm.weight"):
+                        return f"model.layers.{layer_idx}.post_attention_layernorm.weight"
+                    
+                    # Attention projections
+                    if "self_attn" in hf_key:
+                        if hf_key.endswith("o_proj.weight"):
+                            return f"model.layers.{layer_idx}.self_attn.o_proj.weight"
+                        elif hf_key.endswith("qkv_proj.weight"):
+                            return f"model.layers.{layer_idx}.self_attn.qkv_proj.weight"
+                        # Query and Key norm mappings
+                        elif hf_key.endswith("q_norm.weight"):
+                            return f"model.layers.{layer_idx}.self_attn.query_norm.weight"
+                        elif hf_key.endswith("k_norm.weight"):
+                            return f"model.layers.{layer_idx}.self_attn.key_norm.weight"
+                        # Individual Q, K, V projections
+                        elif hf_key.endswith("q_proj.weight"):
+                            return f"model.layers.{layer_idx}.self_attn.q_proj.weight"
+                        elif hf_key.endswith("k_proj.weight"):
+                            return f"model.layers.{layer_idx}.self_attn.k_proj.weight"
+                        elif hf_key.endswith("v_proj.weight"):
+                            return f"model.layers.{layer_idx}.self_attn.v_proj.weight"
+                    
+                    # MLP projections
+                    if "mlp" in hf_key:
+                        if hf_key.endswith("gate_proj.weight"):
+                            return f"model.layers.{layer_idx}.mlp.gate_proj.weight"
+                        elif hf_key.endswith("up_proj.weight"):
+                            return f"model.layers.{layer_idx}.mlp.up_proj.weight"
+                        elif hf_key.endswith("down_proj.weight"):
+                            return f"model.layers.{layer_idx}.mlp.down_proj.weight"
             
             # If no mapping found, return original key
             return hf_key
@@ -1091,33 +1203,35 @@ class Gemma3ForMultimodalLM(nn.Module):
             remapped = {}
             unmapped_qkv = {}
             
+            print(f"Sample raw keys: {list(raw.keys())[:10]}")
+            
             for k, v in raw.items():
                 # Convert to float32 if needed
                 if v.dtype == torch.float16:
                     v = v.to(torch.float32)
                 
+                # Skip the malformed key
+                if k == "model.layers.layers.self_attn.qkv_proj.weight":
+                    print(f"⚠️ Skipping malformed key: {k}")
+                    continue
+                
                 # Check if this is a QKV weight that needs special handling
                 if ("self_attn" in k and any(proj in k for proj in ["q_proj", "k_proj", "v_proj"]) 
-                    and hasattr(self, 'model') and hasattr(self.model, 'layers')):
-                    # Check if your model uses combined QKV projection
-                    layer_idx = k.split(".")[1] if "layers." in k else "0"
-                    try:
-                        # Try to access the layer to see if it has qkv_proj
-                        sample_layer = self.model.layers[0] if hasattr(self.model, 'layers') else None
-                        if sample_layer and hasattr(sample_layer.self_attn, 'qkv_proj'):
-                            unmapped_qkv[k] = v
-                            continue
-                    except:
-                        pass
+                    and not k.endswith("qkv_proj.weight")):
+                    # This is a separate Q/K/V projection - might need combining
+                    unmapped_qkv[k] = v
+                    continue
                 
                 new_key = _map_gemma3_keys(k)
                 if new_key and new_key != k:
                     remapped[new_key] = v
+                    print(f"Mapped: {k} -> {new_key}")
                 elif new_key:
                     remapped[k] = v
             
             # Handle QKV combination if needed
             if unmapped_qkv:
+                print(f"Processing {len(unmapped_qkv)} separate QKV weights")
                 qkv_combined = _combine_qkv_weights(unmapped_qkv)
                 remapped.update(qkv_combined)
             
