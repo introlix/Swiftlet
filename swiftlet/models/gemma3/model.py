@@ -22,8 +22,11 @@ from swiftlet.kernels.embedding import Embedding
 from swiftlet.kernels.siglip_vision import siglip_vision_model
 from swiftlet.models.gemma3 import gemma3_preprocessor
 
+
 class Gemma3Block(nn.Module):
-    def __init__(self, config: gemma_config.GemmaConfig, attn_type: gemma_config.AttentionType):
+    def __init__(
+        self, config: gemma_config.GemmaConfig, attn_type: gemma_config.AttentionType
+    ):
         super().__init__()
         self.attn_type = attn_type
         self.self_attn = GemmaAttention(
@@ -81,6 +84,7 @@ class Gemma3Block(nn.Module):
         hidden_states = residual + hidden_states
 
         return hidden_states
+
 
 class Gemma3Model(nn.Module):
     def __init__(self, config: gemma_config.GemmaConfig):
@@ -379,72 +383,95 @@ class Gemma3ForCausalLM(nn.Module):
         return results[0] if is_str_prompt else results
 
     def from_pretrained(self, model_path: str, map_location="cpu"):
-        """
-        Robust loader for:
-          • single-file .safetensors
-          • any folder containing .safetensors files
-          • sharded safetensors (with index JSON)
-          • fallback to .ckpt/.bin (single or sharded)
-        """
+
         def _collect_safetensors_files(path):
-            # 1) If it's a single-file .safetensors, use that.
             if os.path.isfile(path) and path.endswith(".safetensors"):
                 return [path]
-
-            # 2) If it's a directory, first look for an index JSON.
             idx = os.path.join(path, "model.safetensors.index.json")
             if os.path.isdir(path) and os.path.isfile(idx):
                 with open(idx, "r", encoding="utf-8") as f:
                     index = json.load(f)
                 return sorted(
-                    os.path.join(path, shard_name)
-                    for shard_name in set(index["weight_map"].values())
+                    os.path.join(path, shard)
+                    for shard in set(index["weight_map"].values())
                 )
-
-            # 3) Otherwise, scan the directory for any .safetensors files.
             if os.path.isdir(path):
-                found = [
-                    os.path.join(path, fn)
-                    for fn in os.listdir(path)
-                    if fn.endswith(".safetensors")
-                ]
-                if found:
-                    return sorted(found)
-
-            # nothing found
+                return sorted(
+                    [
+                        os.path.join(path, f)
+                        for f in os.listdir(path)
+                        if f.endswith(".safetensors")
+                    ]
+                )
             return []
 
-        def _gather_and_fix(files):
-            raw = {}
-            for f in files:
-                shards = load_safetensors(f, device=map_location)
-                raw.update(shards)
-            if not raw:
-                return {}
-
-            # remap prefixes
+        def _remap_hf_keys_to_custom(raw):
+            """Remap HuggingFace-like keys to your model's expected keys."""
             fixed = {}
+
             for k, v in raw.items():
+                # Base remapping
                 new_k = k
-                if new_k.startswith("module."):
-                    new_k = new_k[len("module."):]
-                if not new_k.startswith("model."):
-                    new_k = "model." + new_k
+
+                if new_k.startswith("model.embed_tokens."):
+                    new_k = new_k.replace("model.embed_tokens.", "embedder.")
+
+                if "self_attn" in new_k:
+                    # q_proj, k_proj, v_proj → we'll fuse them later
+                    if new_k.endswith("q_proj.weight"):
+                        fixed.setdefault(k.split(".self_attn.")[0] + ".self_attn.q", v)
+                        continue
+                    if new_k.endswith("k_proj.weight"):
+                        fixed.setdefault(k.split(".self_attn.")[0] + ".self_attn.k", v)
+                        continue
+                    if new_k.endswith("v_proj.weight"):
+                        fixed.setdefault(k.split(".self_attn.")[0] + ".self_attn.v", v)
+                        continue
+
+                    # query_norm → q_norm
+                    new_k = new_k.replace("q_norm", "query_norm")
+                    new_k = new_k.replace("k_norm", "key_norm")
+                    new_k = new_k.replace("v_norm", "value_norm")
+
+                # Remove any unnecessary prefixes like "model."
+                if new_k.startswith("model."):
+                    new_k = new_k[len("model.") :]
+
                 fixed[new_k] = v
 
-            # cast float16 → float32
+            # Fuse Q/K/V for each layer into qkv_proj
+            fused = {}
+            for k in list(fixed.keys()):
+                if k.endswith(".self_attn.q"):
+                    base = k[: -len(".q")]
+                    q = fixed.pop(base + ".q")
+                    k_ = fixed.pop(base + ".k")
+                    v = fixed.pop(base + ".v")
+                    qkv = torch.cat([q, k_, v], dim=0)  # adjust dim if needed
+                    fused[base + ".qkv_proj.weight"] = qkv
+
+            fixed.update(fused)
+
+            # Cast float16 → float32
             for k, v in fixed.items():
                 if v.dtype == torch.float16:
                     fixed[k] = v.to(torch.float32)
+
             return fixed
 
         # ——— Try safetensors first ———
         safefiles = _collect_safetensors_files(model_path)
         if safefiles:
-            sd = _gather_and_fix(safefiles)
-            if not sd:
-                raise RuntimeError(f"Found safetensors files but no tensors were loaded from {model_path!r}")
+            raw = {}
+            for f in safefiles:
+                raw.update(load_safetensors(f, device=map_location))
 
+            if not raw:
+                raise RuntimeError(
+                    f"Found safetensors files but no tensors were loaded from {model_path!r}"
+                )
+
+            sd = _remap_hf_keys_to_custom(raw)
             missing, unexpected = self.load_state_dict(sd, strict=False)
             print(f"✅ Loaded {len(sd) - len(unexpected)} tensors from safetensors")
             if missing:
@@ -456,9 +483,11 @@ class Gemma3ForCausalLM(nn.Module):
         # ——— Fallback: single-file PyTorch .ckpt/.bin ———
         if os.path.isfile(model_path):
             ckpt = torch.load(model_path, map_location=map_location)
-            sd   = ckpt.get("model_state_dict", ckpt) if isinstance(ckpt, dict) else ckpt
+            sd = ckpt.get("model_state_dict", ckpt) if isinstance(ckpt, dict) else ckpt
             missing, unexpected = self.load_state_dict(sd, strict=False)
-            print(f"✅ Loaded PyTorch checkpoint, missing={len(missing)}, unexpected={len(unexpected)}")
+            print(
+                f"✅ Loaded PyTorch checkpoint, missing={len(missing)}, unexpected={len(unexpected)}"
+            )
             return
 
         # ——— Fallback: sharded PyTorch folder ———
@@ -468,13 +497,17 @@ class Gemma3ForCausalLM(nn.Module):
                 index = json.load(f)
             all_sd = {}
             for shard in set(index["weight_map"].values()):
-                part = torch.load(os.path.join(model_path, shard), map_location=map_location)
+                part = torch.load(
+                    os.path.join(model_path, shard), map_location=map_location
+                )
                 part_sd = part.get("model_state_dict", part)
                 all_sd.update(part_sd)
                 del part, part_sd
                 gc.collect()
             missing, unexpected = self.load_state_dict(all_sd, strict=False)
-            print(f"✅ Loaded sharded PyTorch checkpoint, missing={len(missing)}, unexpected={len(unexpected)}")
+            print(
+                f"✅ Loaded sharded PyTorch checkpoint, missing={len(missing)}, unexpected={len(unexpected)}"
+            )
             return
 
         raise FileNotFoundError(f"No checkpoint found at '{model_path}'")
@@ -860,72 +893,95 @@ class Gemma3ForMultimodalLM(nn.Module):
         return results
 
     def from_pretrained(self, model_path: str, map_location="cpu"):
-        """
-        Robust loader for:
-          • single-file .safetensors
-          • any folder containing .safetensors files
-          • sharded safetensors (with index JSON)
-          • fallback to .ckpt/.bin (single or sharded)
-        """
+
         def _collect_safetensors_files(path):
-            # 1) If it's a single-file .safetensors, use that.
             if os.path.isfile(path) and path.endswith(".safetensors"):
                 return [path]
-
-            # 2) If it's a directory, first look for an index JSON.
             idx = os.path.join(path, "model.safetensors.index.json")
             if os.path.isdir(path) and os.path.isfile(idx):
                 with open(idx, "r", encoding="utf-8") as f:
                     index = json.load(f)
                 return sorted(
-                    os.path.join(path, shard_name)
-                    for shard_name in set(index["weight_map"].values())
+                    os.path.join(path, shard)
+                    for shard in set(index["weight_map"].values())
                 )
-
-            # 3) Otherwise, scan the directory for any .safetensors files.
             if os.path.isdir(path):
-                found = [
-                    os.path.join(path, fn)
-                    for fn in os.listdir(path)
-                    if fn.endswith(".safetensors")
-                ]
-                if found:
-                    return sorted(found)
-
-            # nothing found
+                return sorted(
+                    [
+                        os.path.join(path, f)
+                        for f in os.listdir(path)
+                        if f.endswith(".safetensors")
+                    ]
+                )
             return []
 
-        def _gather_and_fix(files):
-            raw = {}
-            for f in files:
-                shards = load_safetensors(f, device=map_location)
-                raw.update(shards)
-            if not raw:
-                return {}
-
-            # remap prefixes
+        def _remap_hf_keys_to_custom(raw):
+            """Remap HuggingFace-like keys to your model's expected keys."""
             fixed = {}
+
             for k, v in raw.items():
+                # Base remapping
                 new_k = k
-                if new_k.startswith("module."):
-                    new_k = new_k[len("module."):]
-                if not new_k.startswith("model."):
-                    new_k = "model." + new_k
+
+                if new_k.startswith("model.embed_tokens."):
+                    new_k = new_k.replace("model.embed_tokens.", "embedder.")
+
+                if "self_attn" in new_k:
+                    # q_proj, k_proj, v_proj → we'll fuse them later
+                    if new_k.endswith("q_proj.weight"):
+                        fixed.setdefault(k.split(".self_attn.")[0] + ".self_attn.q", v)
+                        continue
+                    if new_k.endswith("k_proj.weight"):
+                        fixed.setdefault(k.split(".self_attn.")[0] + ".self_attn.k", v)
+                        continue
+                    if new_k.endswith("v_proj.weight"):
+                        fixed.setdefault(k.split(".self_attn.")[0] + ".self_attn.v", v)
+                        continue
+
+                    # query_norm → q_norm
+                    new_k = new_k.replace("q_norm", "query_norm")
+                    new_k = new_k.replace("k_norm", "key_norm")
+                    new_k = new_k.replace("v_norm", "value_norm")
+
+                # Remove any unnecessary prefixes like "model."
+                if new_k.startswith("model."):
+                    new_k = new_k[len("model.") :]
+
                 fixed[new_k] = v
 
-            # cast float16 → float32
+            # Fuse Q/K/V for each layer into qkv_proj
+            fused = {}
+            for k in list(fixed.keys()):
+                if k.endswith(".self_attn.q"):
+                    base = k[: -len(".q")]
+                    q = fixed.pop(base + ".q")
+                    k_ = fixed.pop(base + ".k")
+                    v = fixed.pop(base + ".v")
+                    qkv = torch.cat([q, k_, v], dim=0)  # adjust dim if needed
+                    fused[base + ".qkv_proj.weight"] = qkv
+
+            fixed.update(fused)
+
+            # Cast float16 → float32
             for k, v in fixed.items():
                 if v.dtype == torch.float16:
                     fixed[k] = v.to(torch.float32)
+
             return fixed
 
         # ——— Try safetensors first ———
         safefiles = _collect_safetensors_files(model_path)
         if safefiles:
-            sd = _gather_and_fix(safefiles)
-            if not sd:
-                raise RuntimeError(f"Found safetensors files but no tensors were loaded from {model_path!r}")
+            raw = {}
+            for f in safefiles:
+                raw.update(load_safetensors(f, device=map_location))
 
+            if not raw:
+                raise RuntimeError(
+                    f"Found safetensors files but no tensors were loaded from {model_path!r}"
+                )
+
+            sd = _remap_hf_keys_to_custom(raw)
             missing, unexpected = self.load_state_dict(sd, strict=False)
             print(f"✅ Loaded {len(sd) - len(unexpected)} tensors from safetensors")
             if missing:
@@ -937,9 +993,11 @@ class Gemma3ForMultimodalLM(nn.Module):
         # ——— Fallback: single-file PyTorch .ckpt/.bin ———
         if os.path.isfile(model_path):
             ckpt = torch.load(model_path, map_location=map_location)
-            sd   = ckpt.get("model_state_dict", ckpt) if isinstance(ckpt, dict) else ckpt
+            sd = ckpt.get("model_state_dict", ckpt) if isinstance(ckpt, dict) else ckpt
             missing, unexpected = self.load_state_dict(sd, strict=False)
-            print(f"✅ Loaded PyTorch checkpoint, missing={len(missing)}, unexpected={len(unexpected)}")
+            print(
+                f"✅ Loaded PyTorch checkpoint, missing={len(missing)}, unexpected={len(unexpected)}"
+            )
             return
 
         # ——— Fallback: sharded PyTorch folder ———
@@ -949,13 +1007,17 @@ class Gemma3ForMultimodalLM(nn.Module):
                 index = json.load(f)
             all_sd = {}
             for shard in set(index["weight_map"].values()):
-                part = torch.load(os.path.join(model_path, shard), map_location=map_location)
+                part = torch.load(
+                    os.path.join(model_path, shard), map_location=map_location
+                )
                 part_sd = part.get("model_state_dict", part)
                 all_sd.update(part_sd)
                 del part, part_sd
                 gc.collect()
             missing, unexpected = self.load_state_dict(all_sd, strict=False)
-            print(f"✅ Loaded sharded PyTorch checkpoint, missing={len(missing)}, unexpected={len(unexpected)}")
+            print(
+                f"✅ Loaded sharded PyTorch checkpoint, missing={len(missing)}, unexpected={len(unexpected)}"
+            )
             return
 
         raise FileNotFoundError(f"No checkpoint found at '{model_path}'")
