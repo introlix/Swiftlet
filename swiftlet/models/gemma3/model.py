@@ -551,7 +551,6 @@ class Gemma3ForCausalLM(nn.Module):
                     combined_key = f"model.layers.{layer_idx}.self_attn.qkv_proj.weight"
                     combined_weights[combined_key] = qkv_combined
                     combined_count += 1
-                    print(f"Combined QKV for layer {layer_idx}: {qkv_combined.shape}")
                 else:
                     print(f"⚠️ Incomplete QKV set for layer {layer_idx}: {list(qkv_dict.keys())}")
             
@@ -586,7 +585,6 @@ class Gemma3ForCausalLM(nn.Module):
                 new_key = _map_gemma3_keys(k)
                 if new_key and new_key != k:
                     remapped[new_key] = v
-                    print(f"Mapped: {k} -> {new_key}")
                 elif new_key:
                     remapped[k] = v
             
@@ -1201,13 +1199,10 @@ class Gemma3ForMultimodalLM(nn.Module):
                     
                     if "q_proj.weight" in key:
                         qkv_groups[layer_idx]['q'] = weight
-                        print(f"Found Q proj for layer {layer_idx}: {weight.shape}")
                     elif "k_proj.weight" in key:
                         qkv_groups[layer_idx]['k'] = weight
-                        print(f"Found K proj for layer {layer_idx}: {weight.shape}")
                     elif "v_proj.weight" in key:
                         qkv_groups[layer_idx]['v'] = weight
-                        print(f"Found V proj for layer {layer_idx}: {weight.shape}")
             
             # Combine Q, K, V weights for each layer
             combined_count = 0
@@ -1218,7 +1213,6 @@ class Gemma3ForMultimodalLM(nn.Module):
                     combined_key = f"model.layers.{layer_idx}.self_attn.qkv_proj.weight"
                     combined_weights[combined_key] = qkv_combined
                     combined_count += 1
-                    print(f"Combined QKV for layer {layer_idx}: {qkv_combined.shape}")
                 else:
                     print(f"⚠️ Incomplete QKV set for layer {layer_idx}: {list(qkv_dict.keys())}")
             
@@ -1253,7 +1247,6 @@ class Gemma3ForMultimodalLM(nn.Module):
                 new_key = _map_gemma3_keys(k)
                 if new_key and new_key != k:
                     remapped[new_key] = v
-                    print(f"Mapped: {k} -> {new_key}")
                 elif new_key:
                     remapped[k] = v
             
