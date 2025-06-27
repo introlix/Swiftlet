@@ -414,7 +414,7 @@ class Gemma3ForCausalLM(nn.Module):
                 
                 # Output layer mapping
                 if stripped_key == "norm.weight":
-                    return "norm.weight"
+                    return "model.norm.weight"  # Change this to match your model's expectation
                 
                 # Layer-specific mappings
                 if stripped_key.startswith("layers."):
@@ -465,7 +465,7 @@ class Gemma3ForCausalLM(nn.Module):
                 
                 # Output layer mapping
                 if hf_key == "norm.weight":
-                    return "norm.weight"
+                    return "model.norm.weight"  # Change this to match your model's expectation
                 
                 # Layer-specific mappings
                 if hf_key.startswith("layers."):
@@ -516,32 +516,46 @@ class Gemma3ForCausalLM(nn.Module):
             combined_weights = {}
             qkv_groups = {}
             
+            print(f"QKV weights to process: {list(raw_weights.keys())[:5]}...")
+            
             # Group Q, K, V weights by layer
             for key, weight in raw_weights.items():
                 if "self_attn" in key and any(proj in key for proj in ["q_proj", "k_proj", "v_proj"]):
-                    # Extract layer number
-                    layer_match = key.split(".")
-                    if len(layer_match) >= 2:
-                        layer_idx = layer_match[1]
-                        if layer_idx not in qkv_groups:
-                            qkv_groups[layer_idx] = {}
-                        
-                        if "q_proj.weight" in key:
-                            qkv_groups[layer_idx]['q'] = weight
-                        elif "k_proj.weight" in key:
-                            qkv_groups[layer_idx]['k'] = weight
-                        elif "v_proj.weight" in key:
-                            qkv_groups[layer_idx]['v'] = weight
-                else:
-                    combined_weights[key] = weight
+                    # Extract layer number - handle both formats
+                    if key.startswith("model.layers."):
+                        parts = key.split(".")
+                        layer_idx = parts[2]  # model.layers.X.self_attn...
+                    else:
+                        parts = key.split(".")
+                        layer_idx = parts[1]  # layers.X.self_attn...
+                    
+                    if layer_idx not in qkv_groups:
+                        qkv_groups[layer_idx] = {}
+                    
+                    if "q_proj.weight" in key:
+                        qkv_groups[layer_idx]['q'] = weight
+                        print(f"Found Q proj for layer {layer_idx}: {weight.shape}")
+                    elif "k_proj.weight" in key:
+                        qkv_groups[layer_idx]['k'] = weight
+                        print(f"Found K proj for layer {layer_idx}: {weight.shape}")
+                    elif "v_proj.weight" in key:
+                        qkv_groups[layer_idx]['v'] = weight
+                        print(f"Found V proj for layer {layer_idx}: {weight.shape}")
             
             # Combine Q, K, V weights for each layer
+            combined_count = 0
             for layer_idx, qkv_dict in qkv_groups.items():
                 if 'q' in qkv_dict and 'k' in qkv_dict and 'v' in qkv_dict:
-                    # Concatenate Q, K, V weights
+                    # Concatenate Q, K, V weights along the output dimension (dim=0)
                     qkv_combined = torch.cat([qkv_dict['q'], qkv_dict['k'], qkv_dict['v']], dim=0)
-                    combined_weights[f"model.layers.{layer_idx}.self_attn.qkv_proj.weight"] = qkv_combined
+                    combined_key = f"model.layers.{layer_idx}.self_attn.qkv_proj.weight"
+                    combined_weights[combined_key] = qkv_combined
+                    combined_count += 1
+                    print(f"Combined QKV for layer {layer_idx}: {qkv_combined.shape}")
+                else:
+                    print(f"⚠️ Incomplete QKV set for layer {layer_idx}: {list(qkv_dict.keys())}")
             
+            print(f"Successfully combined QKV weights for {combined_count} layers")
             return combined_weights
 
         def _remap_keys_and_combine(raw):
@@ -1067,7 +1081,7 @@ class Gemma3ForMultimodalLM(nn.Module):
                 
                 # Output layer mapping
                 if stripped_key == "norm.weight":
-                    return "norm.weight"
+                    return "model.norm.weight"  # Change this to match your model's expectation
                 
                 # Layer-specific mappings
                 if stripped_key.startswith("layers."):
@@ -1118,7 +1132,7 @@ class Gemma3ForMultimodalLM(nn.Module):
                 
                 # Output layer mapping
                 if hf_key == "norm.weight":
-                    return "norm.weight"
+                    return "model.norm.weight"  # Change this to match your model's expectation
                 
                 # Layer-specific mappings
                 if hf_key.startswith("layers."):
@@ -1169,32 +1183,46 @@ class Gemma3ForMultimodalLM(nn.Module):
             combined_weights = {}
             qkv_groups = {}
             
+            print(f"QKV weights to process: {list(raw_weights.keys())[:5]}...")
+            
             # Group Q, K, V weights by layer
             for key, weight in raw_weights.items():
                 if "self_attn" in key and any(proj in key for proj in ["q_proj", "k_proj", "v_proj"]):
-                    # Extract layer number
-                    layer_match = key.split(".")
-                    if len(layer_match) >= 2:
-                        layer_idx = layer_match[1]
-                        if layer_idx not in qkv_groups:
-                            qkv_groups[layer_idx] = {}
-                        
-                        if "q_proj.weight" in key:
-                            qkv_groups[layer_idx]['q'] = weight
-                        elif "k_proj.weight" in key:
-                            qkv_groups[layer_idx]['k'] = weight
-                        elif "v_proj.weight" in key:
-                            qkv_groups[layer_idx]['v'] = weight
-                else:
-                    combined_weights[key] = weight
+                    # Extract layer number - handle both formats
+                    if key.startswith("model.layers."):
+                        parts = key.split(".")
+                        layer_idx = parts[2]  # model.layers.X.self_attn...
+                    else:
+                        parts = key.split(".")
+                        layer_idx = parts[1]  # layers.X.self_attn...
+                    
+                    if layer_idx not in qkv_groups:
+                        qkv_groups[layer_idx] = {}
+                    
+                    if "q_proj.weight" in key:
+                        qkv_groups[layer_idx]['q'] = weight
+                        print(f"Found Q proj for layer {layer_idx}: {weight.shape}")
+                    elif "k_proj.weight" in key:
+                        qkv_groups[layer_idx]['k'] = weight
+                        print(f"Found K proj for layer {layer_idx}: {weight.shape}")
+                    elif "v_proj.weight" in key:
+                        qkv_groups[layer_idx]['v'] = weight
+                        print(f"Found V proj for layer {layer_idx}: {weight.shape}")
             
             # Combine Q, K, V weights for each layer
+            combined_count = 0
             for layer_idx, qkv_dict in qkv_groups.items():
                 if 'q' in qkv_dict and 'k' in qkv_dict and 'v' in qkv_dict:
-                    # Concatenate Q, K, V weights
+                    # Concatenate Q, K, V weights along the output dimension (dim=0)
                     qkv_combined = torch.cat([qkv_dict['q'], qkv_dict['k'], qkv_dict['v']], dim=0)
-                    combined_weights[f"model.layers.{layer_idx}.self_attn.qkv_proj.weight"] = qkv_combined
+                    combined_key = f"model.layers.{layer_idx}.self_attn.qkv_proj.weight"
+                    combined_weights[combined_key] = qkv_combined
+                    combined_count += 1
+                    print(f"Combined QKV for layer {layer_idx}: {qkv_combined.shape}")
+                else:
+                    print(f"⚠️ Incomplete QKV set for layer {layer_idx}: {list(qkv_dict.keys())}")
             
+            print(f"Successfully combined QKV weights for {combined_count} layers")
             return combined_weights
 
         def _remap_keys_and_combine(raw):
