@@ -5,7 +5,7 @@ import torch
 from PIL import Image
 from torch import nn
 import torch.nn.functional as F
-from safetensors import safe_open as load_safetensors
+from safetensors.torch import load_file as load_safetensors
 from typing import Tuple, List, Mapping, Union, Sequence, Any
 import swiftlet.models.gemma.config as gemma_config
 from swiftlet.models.gemma import tokenizer
@@ -392,44 +392,40 @@ class Gemma3ForCausalLM(nn.Module):
                 with open(idx, "r", encoding="utf-8") as f:
                     index = json.load(f)
                 return sorted(
-                    os.path.join(path, shard)
-                    for shard in set(index["weight_map"].values())
+                    os.path.join(path, shard) for shard in set(index["weight_map"].values())
                 )
             if os.path.isdir(path):
-                return sorted(
-                    [
-                        os.path.join(path, f)
-                        for f in os.listdir(path)
-                        if f.endswith(".safetensors")
-                    ]
-                )
+                return sorted([
+                    os.path.join(path, f)
+                    for f in os.listdir(path) if f.endswith(".safetensors")
+                ])
             return []
 
         def _map_gemma3_keys(hf_key):
             """Map HuggingFace Gemma3 keys to your custom implementation keys."""
-
+            
             # Embedding layer mapping
             if hf_key == "embed_tokens.weight":
                 return "embedder.weight"
-
+            
             # Output layer mapping
             if hf_key == "norm.weight":
                 return "norm.weight"  # Adjust if your final norm has different name
-
+            
             # Layer-specific mappings
             if hf_key.startswith("layers."):
                 # Extract layer number
                 parts = hf_key.split(".")
                 layer_idx = parts[1]
-
+                
                 # Input layer norm
                 if hf_key.endswith("input_layernorm.weight"):
                     return f"model.layers.{layer_idx}.input_layernorm.weight"
-
+                
                 # Post attention layer norm
                 if hf_key.endswith("post_attention_layernorm.weight"):
                     return f"model.layers.{layer_idx}.post_attention_layernorm.weight"
-
+                
                 # Attention projections
                 if "self_attn" in hf_key:
                     if hf_key.endswith("q_proj.weight"):
@@ -441,12 +437,12 @@ class Gemma3ForCausalLM(nn.Module):
                         return f"model.layers.{layer_idx}.self_attn.v_proj.weight"
                     elif hf_key.endswith("o_proj.weight"):
                         return f"model.layers.{layer_idx}.self_attn.o_proj.weight"
-
+                    
                     # If your implementation uses combined QKV projection
                     if any(x in hf_key for x in ["q_proj", "k_proj", "v_proj"]):
                         # You might need to combine these - see _combine_qkv_weights below
                         return None  # Handle specially
-
+                
                 # MLP projections
                 if "mlp" in hf_key:
                     if hf_key.endswith("gate_proj.weight"):
@@ -455,7 +451,7 @@ class Gemma3ForCausalLM(nn.Module):
                         return f"model.layers.{layer_idx}.mlp.up_proj.weight"
                     elif hf_key.endswith("down_proj.weight"):
                         return f"model.layers.{layer_idx}.mlp.down_proj.weight"
-
+            
             # If no mapping found, return original key
             return hf_key
 
@@ -463,39 +459,33 @@ class Gemma3ForCausalLM(nn.Module):
             """Combine separate Q, K, V weights into QKV projection if needed."""
             combined_weights = {}
             qkv_groups = {}
-
+            
             # Group Q, K, V weights by layer
             for key, weight in raw_weights.items():
-                if "self_attn" in key and any(
-                    proj in key for proj in ["q_proj", "k_proj", "v_proj"]
-                ):
+                if "self_attn" in key and any(proj in key for proj in ["q_proj", "k_proj", "v_proj"]):
                     # Extract layer number
                     layer_match = key.split(".")
                     if len(layer_match) >= 2:
                         layer_idx = layer_match[1]
                         if layer_idx not in qkv_groups:
                             qkv_groups[layer_idx] = {}
-
+                        
                         if "q_proj.weight" in key:
-                            qkv_groups[layer_idx]["q"] = weight
+                            qkv_groups[layer_idx]['q'] = weight
                         elif "k_proj.weight" in key:
-                            qkv_groups[layer_idx]["k"] = weight
+                            qkv_groups[layer_idx]['k'] = weight
                         elif "v_proj.weight" in key:
-                            qkv_groups[layer_idx]["v"] = weight
+                            qkv_groups[layer_idx]['v'] = weight
                 else:
                     combined_weights[key] = weight
-
+            
             # Combine Q, K, V weights for each layer
             for layer_idx, qkv_dict in qkv_groups.items():
-                if "q" in qkv_dict and "k" in qkv_dict and "v" in qkv_dict:
+                if 'q' in qkv_dict and 'k' in qkv_dict and 'v' in qkv_dict:
                     # Concatenate Q, K, V weights
-                    qkv_combined = torch.cat(
-                        [qkv_dict["q"], qkv_dict["k"], qkv_dict["v"]], dim=0
-                    )
-                    combined_weights[
-                        f"model.layers.{layer_idx}.self_attn.qkv_proj.weight"
-                    ] = qkv_combined
-
+                    qkv_combined = torch.cat([qkv_dict['q'], qkv_dict['k'], qkv_dict['v']], dim=0)
+                    combined_weights[f"model.layers.{layer_idx}.self_attn.qkv_proj.weight"] = qkv_combined
+            
             return combined_weights
 
         def _remap_keys_and_combine(raw):
@@ -503,54 +493,43 @@ class Gemma3ForCausalLM(nn.Module):
             # First pass: basic key remapping
             remapped = {}
             unmapped_qkv = {}
-
+            
             for k, v in raw.items():
                 # Convert to float32 if needed
                 if v.dtype == torch.float16:
                     v = v.to(torch.float32)
-
+                
                 # Check if this is a QKV weight that needs special handling
-                if (
-                    "self_attn" in k
-                    and any(proj in k for proj in ["q_proj", "k_proj", "v_proj"])
-                    and hasattr(self, "model")
-                    and hasattr(self.model, "layers")
-                ):
+                if ("self_attn" in k and any(proj in k for proj in ["q_proj", "k_proj", "v_proj"]) 
+                    and hasattr(self, 'model') and hasattr(self.model, 'layers')):
                     # Check if your model uses combined QKV projection
                     layer_idx = k.split(".")[1] if "layers." in k else "0"
                     try:
                         # Try to access the layer to see if it has qkv_proj
-                        sample_layer = (
-                            self.model.layers[0]
-                            if hasattr(self.model, "layers")
-                            else None
-                        )
-                        if sample_layer and hasattr(sample_layer.self_attn, "qkv_proj"):
+                        sample_layer = self.model.layers[0] if hasattr(self.model, 'layers') else None
+                        if sample_layer and hasattr(sample_layer.self_attn, 'qkv_proj'):
                             unmapped_qkv[k] = v
                             continue
                     except:
                         pass
-
+                
                 new_key = _map_gemma3_keys(k)
                 if new_key and new_key != k:
                     remapped[new_key] = v
                 elif new_key:
                     remapped[k] = v
-
+            
             # Handle QKV combination if needed
             if unmapped_qkv:
                 qkv_combined = _combine_qkv_weights(unmapped_qkv)
                 remapped.update(qkv_combined)
-
+            
             return remapped
 
         def _load_safetensors_file(filepath, device):
             """Load a single safetensors file."""
-            tensors = {}
-            with load_safetensors(filepath) as f:
-                for key in f.keys():
-                    tensors[key] = f.get_tensor(key).to(device)
-            return tensors
+            # Use load_file directly - it's simpler and more reliable
+            return load_safetensors(filepath, device=device)
 
         # ——— Try safetensors first ———
         safefiles = _collect_safetensors_files(model_path)
@@ -562,44 +541,34 @@ class Gemma3ForCausalLM(nn.Module):
                 raw.update(_load_safetensors_file(f, map_location))
 
             if not raw:
-                raise RuntimeError(
-                    f"Found safetensors files but no tensors were loaded from {model_path!r}"
-                )
+                raise RuntimeError(f"Found safetensors files but no tensors were loaded from {model_path!r}")
 
             print(f"Loaded {len(raw)} raw tensors from safetensors")
-
+            
             # Apply key remapping and combinations
             sd = _remap_keys_and_combine(raw)
-
+            
             # Add any missing positional embeddings if your model needs them
-            if hasattr(self, "local_freqs_cis") and "local_freqs_cis" not in sd:
-                print(
-                    "⚠️ local_freqs_cis not found in checkpoint, using model's initialized values"
-                )
-            if hasattr(self, "global_freqs_cis") and "global_freqs_cis" not in sd:
-                print(
-                    "⚠️ global_freqs_cis not found in checkpoint, using model's initialized values"
-                )
-
+            if hasattr(self, 'local_freqs_cis') and 'local_freqs_cis' not in sd:
+                print("⚠️ local_freqs_cis not found in checkpoint, using model's initialized values")
+            if hasattr(self, 'global_freqs_cis') and 'global_freqs_cis' not in sd:
+                print("⚠️ global_freqs_cis not found in checkpoint, using model's initialized values")
+            
             # Load state dict
             missing, unexpected = self.load_state_dict(sd, strict=False)
-
+            
             print(f"✅ Loaded {len(sd) - len(unexpected)} tensors from safetensors")
             if missing:
-                print(
-                    f"⚠️ Missing keys ({len(missing)}): {missing[:5]} {'...' if len(missing) > 5 else ''}"
-                )
+                print(f"⚠️ Missing keys ({len(missing)}): {missing[:5]} {'...' if len(missing) > 5 else ''}")
                 # Print first few missing keys for debugging
                 for key in missing[:10]:
                     print(f"   Missing: {key}")
             if unexpected:
-                print(
-                    f"⚠️ Unexpected keys ({len(unexpected)}): {unexpected[:5]} {'...' if len(unexpected) > 5 else ''}"
-                )
+                print(f"⚠️ Unexpected keys ({len(unexpected)}): {unexpected[:5]} {'...' if len(unexpected) > 5 else ''}")
                 # Print first few unexpected keys for debugging
                 for key in unexpected[:10]:
                     print(f"   Unexpected: {key}")
-
+            
             return
 
         # ——— Fallback: single-file PyTorch .ckpt/.bin ———
@@ -607,9 +576,7 @@ class Gemma3ForCausalLM(nn.Module):
             ckpt = torch.load(model_path, map_location=map_location)
             sd = ckpt.get("model_state_dict", ckpt) if isinstance(ckpt, dict) else ckpt
             missing, unexpected = self.load_state_dict(sd, strict=False)
-            print(
-                f"✅ Loaded PyTorch checkpoint, missing={len(missing)}, unexpected={len(unexpected)}"
-            )
+            print(f"✅ Loaded PyTorch checkpoint, missing={len(missing)}, unexpected={len(unexpected)}")
             return
 
         # ——— Fallback: sharded PyTorch folder ———
@@ -619,20 +586,17 @@ class Gemma3ForCausalLM(nn.Module):
                 index = json.load(f)
             all_sd = {}
             for shard in set(index["weight_map"].values()):
-                part = torch.load(
-                    os.path.join(model_path, shard), map_location=map_location
-                )
+                part = torch.load(os.path.join(model_path, shard), map_location=map_location)
                 part_sd = part.get("model_state_dict", part)
                 all_sd.update(part_sd)
                 del part, part_sd
                 gc.collect()
             missing, unexpected = self.load_state_dict(all_sd, strict=False)
-            print(
-                f"✅ Loaded sharded PyTorch checkpoint, missing={len(missing)}, unexpected={len(unexpected)}"
-            )
+            print(f"✅ Loaded sharded PyTorch checkpoint, missing={len(missing)}, unexpected={len(unexpected)}")
             return
 
         raise FileNotFoundError(f"No checkpoint found at '{model_path}'")
+
 
 
 
@@ -1025,44 +989,40 @@ class Gemma3ForMultimodalLM(nn.Module):
                 with open(idx, "r", encoding="utf-8") as f:
                     index = json.load(f)
                 return sorted(
-                    os.path.join(path, shard)
-                    for shard in set(index["weight_map"].values())
+                    os.path.join(path, shard) for shard in set(index["weight_map"].values())
                 )
             if os.path.isdir(path):
-                return sorted(
-                    [
-                        os.path.join(path, f)
-                        for f in os.listdir(path)
-                        if f.endswith(".safetensors")
-                    ]
-                )
+                return sorted([
+                    os.path.join(path, f)
+                    for f in os.listdir(path) if f.endswith(".safetensors")
+                ])
             return []
 
         def _map_gemma3_keys(hf_key):
             """Map HuggingFace Gemma3 keys to your custom implementation keys."""
-
+            
             # Embedding layer mapping
             if hf_key == "embed_tokens.weight":
                 return "embedder.weight"
-
+            
             # Output layer mapping
             if hf_key == "norm.weight":
                 return "norm.weight"  # Adjust if your final norm has different name
-
+            
             # Layer-specific mappings
             if hf_key.startswith("layers."):
                 # Extract layer number
                 parts = hf_key.split(".")
                 layer_idx = parts[1]
-
+                
                 # Input layer norm
                 if hf_key.endswith("input_layernorm.weight"):
                     return f"model.layers.{layer_idx}.input_layernorm.weight"
-
+                
                 # Post attention layer norm
                 if hf_key.endswith("post_attention_layernorm.weight"):
                     return f"model.layers.{layer_idx}.post_attention_layernorm.weight"
-
+                
                 # Attention projections
                 if "self_attn" in hf_key:
                     if hf_key.endswith("q_proj.weight"):
@@ -1074,12 +1034,12 @@ class Gemma3ForMultimodalLM(nn.Module):
                         return f"model.layers.{layer_idx}.self_attn.v_proj.weight"
                     elif hf_key.endswith("o_proj.weight"):
                         return f"model.layers.{layer_idx}.self_attn.o_proj.weight"
-
+                    
                     # If your implementation uses combined QKV projection
                     if any(x in hf_key for x in ["q_proj", "k_proj", "v_proj"]):
                         # You might need to combine these - see _combine_qkv_weights below
                         return None  # Handle specially
-
+                
                 # MLP projections
                 if "mlp" in hf_key:
                     if hf_key.endswith("gate_proj.weight"):
@@ -1088,7 +1048,7 @@ class Gemma3ForMultimodalLM(nn.Module):
                         return f"model.layers.{layer_idx}.mlp.up_proj.weight"
                     elif hf_key.endswith("down_proj.weight"):
                         return f"model.layers.{layer_idx}.mlp.down_proj.weight"
-
+            
             # If no mapping found, return original key
             return hf_key
 
@@ -1096,39 +1056,33 @@ class Gemma3ForMultimodalLM(nn.Module):
             """Combine separate Q, K, V weights into QKV projection if needed."""
             combined_weights = {}
             qkv_groups = {}
-
+            
             # Group Q, K, V weights by layer
             for key, weight in raw_weights.items():
-                if "self_attn" in key and any(
-                    proj in key for proj in ["q_proj", "k_proj", "v_proj"]
-                ):
+                if "self_attn" in key and any(proj in key for proj in ["q_proj", "k_proj", "v_proj"]):
                     # Extract layer number
                     layer_match = key.split(".")
                     if len(layer_match) >= 2:
                         layer_idx = layer_match[1]
                         if layer_idx not in qkv_groups:
                             qkv_groups[layer_idx] = {}
-
+                        
                         if "q_proj.weight" in key:
-                            qkv_groups[layer_idx]["q"] = weight
+                            qkv_groups[layer_idx]['q'] = weight
                         elif "k_proj.weight" in key:
-                            qkv_groups[layer_idx]["k"] = weight
+                            qkv_groups[layer_idx]['k'] = weight
                         elif "v_proj.weight" in key:
-                            qkv_groups[layer_idx]["v"] = weight
+                            qkv_groups[layer_idx]['v'] = weight
                 else:
                     combined_weights[key] = weight
-
+            
             # Combine Q, K, V weights for each layer
             for layer_idx, qkv_dict in qkv_groups.items():
-                if "q" in qkv_dict and "k" in qkv_dict and "v" in qkv_dict:
+                if 'q' in qkv_dict and 'k' in qkv_dict and 'v' in qkv_dict:
                     # Concatenate Q, K, V weights
-                    qkv_combined = torch.cat(
-                        [qkv_dict["q"], qkv_dict["k"], qkv_dict["v"]], dim=0
-                    )
-                    combined_weights[
-                        f"model.layers.{layer_idx}.self_attn.qkv_proj.weight"
-                    ] = qkv_combined
-
+                    qkv_combined = torch.cat([qkv_dict['q'], qkv_dict['k'], qkv_dict['v']], dim=0)
+                    combined_weights[f"model.layers.{layer_idx}.self_attn.qkv_proj.weight"] = qkv_combined
+            
             return combined_weights
 
         def _remap_keys_and_combine(raw):
@@ -1136,54 +1090,43 @@ class Gemma3ForMultimodalLM(nn.Module):
             # First pass: basic key remapping
             remapped = {}
             unmapped_qkv = {}
-
+            
             for k, v in raw.items():
                 # Convert to float32 if needed
                 if v.dtype == torch.float16:
                     v = v.to(torch.float32)
-
+                
                 # Check if this is a QKV weight that needs special handling
-                if (
-                    "self_attn" in k
-                    and any(proj in k for proj in ["q_proj", "k_proj", "v_proj"])
-                    and hasattr(self, "model")
-                    and hasattr(self.model, "layers")
-                ):
+                if ("self_attn" in k and any(proj in k for proj in ["q_proj", "k_proj", "v_proj"]) 
+                    and hasattr(self, 'model') and hasattr(self.model, 'layers')):
                     # Check if your model uses combined QKV projection
                     layer_idx = k.split(".")[1] if "layers." in k else "0"
                     try:
                         # Try to access the layer to see if it has qkv_proj
-                        sample_layer = (
-                            self.model.layers[0]
-                            if hasattr(self.model, "layers")
-                            else None
-                        )
-                        if sample_layer and hasattr(sample_layer.self_attn, "qkv_proj"):
+                        sample_layer = self.model.layers[0] if hasattr(self.model, 'layers') else None
+                        if sample_layer and hasattr(sample_layer.self_attn, 'qkv_proj'):
                             unmapped_qkv[k] = v
                             continue
                     except:
                         pass
-
+                
                 new_key = _map_gemma3_keys(k)
                 if new_key and new_key != k:
                     remapped[new_key] = v
                 elif new_key:
                     remapped[k] = v
-
+            
             # Handle QKV combination if needed
             if unmapped_qkv:
                 qkv_combined = _combine_qkv_weights(unmapped_qkv)
                 remapped.update(qkv_combined)
-
+            
             return remapped
 
         def _load_safetensors_file(filepath, device):
             """Load a single safetensors file."""
-            tensors = {}
-            with load_safetensors(filepath) as f:
-                for key in f.keys():
-                    tensors[key] = f.get_tensor(key).to(device)
-            return tensors
+            # Use load_file directly - it's simpler and more reliable
+            return load_safetensors(filepath, device=device)
 
         # ——— Try safetensors first ———
         safefiles = _collect_safetensors_files(model_path)
@@ -1195,44 +1138,34 @@ class Gemma3ForMultimodalLM(nn.Module):
                 raw.update(_load_safetensors_file(f, map_location))
 
             if not raw:
-                raise RuntimeError(
-                    f"Found safetensors files but no tensors were loaded from {model_path!r}"
-                )
+                raise RuntimeError(f"Found safetensors files but no tensors were loaded from {model_path!r}")
 
             print(f"Loaded {len(raw)} raw tensors from safetensors")
-
+            
             # Apply key remapping and combinations
             sd = _remap_keys_and_combine(raw)
-
+            
             # Add any missing positional embeddings if your model needs them
-            if hasattr(self, "local_freqs_cis") and "local_freqs_cis" not in sd:
-                print(
-                    "⚠️ local_freqs_cis not found in checkpoint, using model's initialized values"
-                )
-            if hasattr(self, "global_freqs_cis") and "global_freqs_cis" not in sd:
-                print(
-                    "⚠️ global_freqs_cis not found in checkpoint, using model's initialized values"
-                )
-
+            if hasattr(self, 'local_freqs_cis') and 'local_freqs_cis' not in sd:
+                print("⚠️ local_freqs_cis not found in checkpoint, using model's initialized values")
+            if hasattr(self, 'global_freqs_cis') and 'global_freqs_cis' not in sd:
+                print("⚠️ global_freqs_cis not found in checkpoint, using model's initialized values")
+            
             # Load state dict
             missing, unexpected = self.load_state_dict(sd, strict=False)
-
+            
             print(f"✅ Loaded {len(sd) - len(unexpected)} tensors from safetensors")
             if missing:
-                print(
-                    f"⚠️ Missing keys ({len(missing)}): {missing[:5]} {'...' if len(missing) > 5 else ''}"
-                )
+                print(f"⚠️ Missing keys ({len(missing)}): {missing[:5]} {'...' if len(missing) > 5 else ''}")
                 # Print first few missing keys for debugging
                 for key in missing[:10]:
                     print(f"   Missing: {key}")
             if unexpected:
-                print(
-                    f"⚠️ Unexpected keys ({len(unexpected)}): {unexpected[:5]} {'...' if len(unexpected) > 5 else ''}"
-                )
+                print(f"⚠️ Unexpected keys ({len(unexpected)}): {unexpected[:5]} {'...' if len(unexpected) > 5 else ''}")
                 # Print first few unexpected keys for debugging
                 for key in unexpected[:10]:
                     print(f"   Unexpected: {key}")
-
+            
             return
 
         # ——— Fallback: single-file PyTorch .ckpt/.bin ———
@@ -1240,9 +1173,7 @@ class Gemma3ForMultimodalLM(nn.Module):
             ckpt = torch.load(model_path, map_location=map_location)
             sd = ckpt.get("model_state_dict", ckpt) if isinstance(ckpt, dict) else ckpt
             missing, unexpected = self.load_state_dict(sd, strict=False)
-            print(
-                f"✅ Loaded PyTorch checkpoint, missing={len(missing)}, unexpected={len(unexpected)}"
-            )
+            print(f"✅ Loaded PyTorch checkpoint, missing={len(missing)}, unexpected={len(unexpected)}")
             return
 
         # ——— Fallback: sharded PyTorch folder ———
@@ -1252,17 +1183,13 @@ class Gemma3ForMultimodalLM(nn.Module):
                 index = json.load(f)
             all_sd = {}
             for shard in set(index["weight_map"].values()):
-                part = torch.load(
-                    os.path.join(model_path, shard), map_location=map_location
-                )
+                part = torch.load(os.path.join(model_path, shard), map_location=map_location)
                 part_sd = part.get("model_state_dict", part)
                 all_sd.update(part_sd)
                 del part, part_sd
                 gc.collect()
             missing, unexpected = self.load_state_dict(all_sd, strict=False)
-            print(
-                f"✅ Loaded sharded PyTorch checkpoint, missing={len(missing)}, unexpected={len(unexpected)}"
-            )
+            print(f"✅ Loaded sharded PyTorch checkpoint, missing={len(missing)}, unexpected={len(unexpected)}")
             return
 
         raise FileNotFoundError(f"No checkpoint found at '{model_path}'")
