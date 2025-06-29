@@ -6,6 +6,8 @@ import bitsandbytes as bnb
 class Linear(nn.Module):
     def __init__(self, in_features: int, out_features: int, quant: bool, quant_type: str, bias: bool):
         super().__init__()
+        self.quant = quant
+        
         if not quant:
             if quant_type:
                 raise ValueError("quant_type should not be specified when quant is False.")
@@ -32,7 +34,7 @@ class Linear(nn.Module):
                 raise ValueError(
                     "quant_type must be 'int4', 'int8', 'fp4' when quant=True"
                 )
-            
+
         self.reset_parameters()
 
     def reset_parameters(self):
