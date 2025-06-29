@@ -11,7 +11,6 @@ import swiftlet.models.gemma.config as gemma_config
 from swiftlet.models.gemma import tokenizer
 from swiftlet.models.gemma.model import (
     RMSNorm,
-    Linear,
     Sampler,
     precompute_freqs_cis,
     GemmaMLP,
@@ -21,7 +20,7 @@ from swiftlet.models.gemma import tokenizer
 from swiftlet.kernels.embedding import Embedding
 from swiftlet.kernels.siglip_vision import siglip_vision_model
 from swiftlet.models.gemma3 import gemma3_preprocessor
-
+from swiftlet.kernels.linear import Linear
 
 class Gemma3Block(nn.Module):
     def __init__(
@@ -37,6 +36,7 @@ class Gemma3Block(nn.Module):
             hidden_size=config.hidden_size,
             intermediate_size=config.intermediate_size,
             quant=config.quant,
+            quant_type=config.quant_type,
         )
         self.input_layernorm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         self.post_attention_layernorm = RMSNorm(
@@ -701,7 +701,7 @@ class Gemma3ForMultimodalLM(nn.Module):
         )
         # transformer/embedder/mm_input_projection
         self.mm_input_projection = Linear(
-            config.vision_config.embedding_dim, config.hidden_size, config.quant
+            config.vision_config.embedding_dim, config.hidden_size, config.quant, config.quant_type, bias=False
         )
 
         if config.rope_wave_length is None:

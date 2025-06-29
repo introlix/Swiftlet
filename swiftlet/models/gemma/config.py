@@ -52,6 +52,7 @@ class SiglipVisionModelConfig:
   dtype: str = 'bfloat16'
   # Whether a quantized version of the model is used.
   quant: bool = False
+  quant_type: str="" # The type of quantization used, e.g., 'int8', 'int4'.
   # The sequence length of the encoding.
   encoding_sequence_length: int = 256
 
@@ -70,6 +71,7 @@ class GemmaConfig:
     rms_norm_eps: float = 1e-6
     dtype: str = 'bfloat16'
     quant: bool = False
+    quant_type: str = '' # The type of quantization used, e.g., 'int8', 'int4'.
     tokenizer: Optional[str] = None
     attn_types: Optional[Sequence[AttentionType]] = None
     sliding_window_size: Optional[int] = None
@@ -80,6 +82,7 @@ class GemmaConfig:
     use_post_ffw_norm: bool = False
     rope_wave_length: dict[AttentionType, int] | None = None
     use_qk_norm: bool = False
+    use_bias: bool = False
 
     vision_config: SiglipVisionModelConfig | None = None
     rope_scaling_factor: int| None = None

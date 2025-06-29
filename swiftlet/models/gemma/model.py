@@ -9,6 +9,9 @@ from typing import Tuple, Mapping, List, Union, Optional, Any, Sequence
 import swiftlet.models.gemma.config as gemma_config
 from swiftlet.models.gemma import tokenizer
 from swiftlet.kernels.embedding import Embedding
+from swiftlet.kernels.rmsnorm import RMSNorm
+from swiftlet.kernels.linear import Linear
+from swiftlet.kernels.rope import precompute_freqs_cis, apply_rotary_emb
 
 
 # This is taken from https://github.com/google/gemma_pytorch/blob/main/gemma/model.py#L28
@@ -71,83 +74,6 @@ class Sampler(nn.Module):
         return next_token_ids, logits
 
 
-def precompute_freqs_cis(
-    dim: int, end: int, theta: float = 10000.0, rope_scaling_factor: int = 1
-) -> torch.Tensor:
-    """Precomputes the frequency cis."""
-    freqs = 1.0 / (theta ** (torch.arange(0, dim, 2)[: (dim // 2)].float() / dim))
-    freqs = freqs / rope_scaling_factor
-    t = torch.arange(end, device=freqs.device)
-    freqs = torch.outer(t, freqs).float()
-    freqs_cis = torch.polar(torch.ones_like(freqs), freqs)  # complex64
-    return freqs_cis
-
-
-def apply_rotary_emb(x: torch.Tensor, freqs_cis: torch.Tensor) -> torch.Tensor:
-    """Applies the rotary embedding to the query and key tensors."""
-    x_ = torch.view_as_complex(
-        torch.stack(torch.chunk(x.transpose(1, 2).float(), 2, dim=-1), dim=-1)
-    )
-    x_out = torch.view_as_real(x_ * freqs_cis).type_as(x)
-    x_out = torch.cat(torch.chunk(x_out, 2, dim=-1), dim=-2)
-    x_out = x_out.reshape(x_out.shape[0], x_out.shape[1], x_out.shape[2], -1).transpose(
-        1, 2
-    )
-    return x_out
-
-
-class RMSNorm(torch.nn.Module):
-
-    def __init__(
-        self,
-        dim: int,
-        eps: float = 1e-6,
-        add_unit_offset: bool = True,
-    ):
-        super().__init__()
-        self.eps = eps
-        self.add_unit_offset = add_unit_offset
-        self.weight = nn.Parameter(torch.zeros(dim))
-
-    def _norm(self, x):
-        return x * torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + self.eps)
-
-    def forward(self, x):
-        # Llama does x.to(float16) * w whilst Gemma2 is (x * w).to(float16)
-        # See https://github.com/huggingface/transformers/pull/29402
-        output = self._norm(x.float())
-        if self.add_unit_offset:
-            output = output * (1 + self.weight.float())
-        else:
-            output = output * self.weight.float()
-        return output.type_as(x)
-
-
-class Linear(nn.Module):
-
-    def __init__(self, in_features: int, out_features: int, quant: bool):
-        super().__init__()
-        if quant:
-            self.weight = nn.Parameter(
-                torch.empty((out_features, in_features), dtype=torch.int8),
-                requires_grad=False,
-            )
-            self.weight_scaler = nn.Parameter(torch.Tensor(out_features))
-        else:
-            self.weight = nn.Parameter(
-                torch.empty((out_features, in_features)),
-                requires_grad=False,
-            )
-        self.quant = quant
-
-    def forward(self, x):
-        weight = self.weight
-        if self.quant:
-            weight = weight * self.weight_scaler.unsqueeze(-1)
-        output = F.linear(x, weight)
-        return output
-
-
 class GemmaAttention(nn.Module):
     def __init__(
         self,
@@ -176,9 +102,11 @@ class GemmaAttention(nn.Module):
             self.hidden_size,
             (self.num_heads + 2 * self.num_kv_heads) * self.head_dim,
             quant=config.quant,
+            quant_type=config.quant_type,
+            bias=config.use_bias,
         )
         self.o_proj = Linear(
-            self.num_heads * self.head_dim, self.hidden_size, quant=config.quant
+            self.num_heads * self.head_dim, self.hidden_size, quant=config.quant, quant_type=config.quant_type, bias=config.use_bias
         )
 
         self.query_norm = (
@@ -287,11 +215,11 @@ class GemmaAttention(nn.Module):
 
 
 class GemmaMLP(nn.Module):
-    def __init__(self, hidden_size: int, intermediate_size: int, quant: bool):
+    def __init__(self, hidden_size: int, intermediate_size: int, quant: bool, quant_type: str):
         super().__init__()
-        self.gate_proj = Linear(hidden_size, intermediate_size, quant)
-        self.up_proj = Linear(hidden_size, intermediate_size, quant)
-        self.down_proj = Linear(intermediate_size, hidden_size, quant)
+        self.gate_proj = Linear(hidden_size, intermediate_size, quant, quant_type, bias=False)
+        self.up_proj = Linear(hidden_size, intermediate_size, quant, quant_type, bias=False)
+        self.down_proj = Linear(intermediate_size, hidden_size, quant, quant_type, bias=False)
 
     def forward(self, x):
         gate = self.gate_proj(x)
@@ -313,6 +241,7 @@ class GemmaBlock(nn.Module):
             hidden_size=config.hidden_size,
             intermediate_size=config.intermediate_size,
             quant=config.quant,
+            quant_type=config.quant_type,
         )
 
         self.input_layernorm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
