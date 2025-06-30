@@ -414,8 +414,7 @@ class Gemma3ForCausalLM(nn.Module):
                 
                 # Output layer mapping
                 if stripped_key == "norm.weight":
-                    return "model.norm.weight"  # Change this to match your model's expectation
-                
+                    return "model.norm.weight"
                 
                 # Layer-specific mappings
                 if stripped_key.startswith("layers."):
@@ -430,34 +429,31 @@ class Gemma3ForCausalLM(nn.Module):
                     if stripped_key.endswith("post_attention_layernorm.weight"):
                         return f"model.layers.{layer_idx}.post_attention_layernorm.weight"
                     
-                    # Attention projections
+                    # Attention projections - ADD .linear for quantized layers
                     if "self_attn" in stripped_key:
-                        #TODO Remove o_proj
-                        # if stripped_key.endswith("o_proj.weight"):
-                        #     return f"model.layers.{layer_idx}.self_attn.o_proj.weight"
-                        # elif stripped_key.endswith("qkv_proj.weight"):
-                        #     return f"model.layers.{layer_idx}.self_attn.qkv_proj.weight"
                         # Query and Key norm mappings
                         if stripped_key.endswith("q_norm.weight"):
                             return f"model.layers.{layer_idx}.self_attn.query_norm.weight"
                         elif stripped_key.endswith("k_norm.weight"):
                             return f"model.layers.{layer_idx}.self_attn.key_norm.weight"
-                        # Individual Q, K, V projections (if they exist)
+                        # Individual Q, K, V projections - ADD .linear for quantized layers
                         elif stripped_key.endswith("q_proj.weight"):
-                            return f"model.layers.{layer_idx}.self_attn.q_proj.weight"
+                            return f"model.layers.{layer_idx}.self_attn.q_proj.linear.weight"
                         elif stripped_key.endswith("k_proj.weight"):
-                            return f"model.layers.{layer_idx}.self_attn.k_proj.weight"
+                            return f"model.layers.{layer_idx}.self_attn.k_proj.linear.weight"
                         elif stripped_key.endswith("v_proj.weight"):
-                            return f"model.layers.{layer_idx}.self_attn.v_proj.weight"
+                            return f"model.layers.{layer_idx}.self_attn.v_proj.linear.weight"
+                        elif stripped_key.endswith("o_proj.weight"):
+                            return f"model.layers.{layer_idx}.self_attn.o_proj.linear.weight"
                     
-                    # MLP projections
-                    # if "mlp" in stripped_key:
-                        # if stripped_key.endswith("gate_proj.weight"):
-                        #     return f"model.layers.{layer_idx}.mlp.gate_proj.weight"
-                        # if stripped_key.endswith("up_proj.weight"):
-                        #     return f"model.layers.{layer_idx}.mlp.up_proj.weight"
-                        # if stripped_key.endswith("down_proj.weight"):
-                        #     return f"model.layers.{layer_idx}.mlp.down_proj.weight"
+                    # MLP projections - ADD .linear for quantized layers
+                    if "mlp" in stripped_key:
+                        if stripped_key.endswith("gate_proj.weight"):
+                            return f"model.layers.{layer_idx}.mlp.gate_proj.linear.weight"
+                        elif stripped_key.endswith("up_proj.weight"):
+                            return f"model.layers.{layer_idx}.mlp.up_proj.linear.weight"
+                        elif stripped_key.endswith("down_proj.weight"):
+                            return f"model.layers.{layer_idx}.mlp.down_proj.linear.weight"
             
             # Handle keys without 'model.' prefix (original HF format)
             else:
@@ -467,7 +463,7 @@ class Gemma3ForCausalLM(nn.Module):
                 
                 # Output layer mapping
                 if hf_key == "norm.weight":
-                    return "model.norm.weight"  # Change this to match your model's expectation
+                    return "model.norm.weight"
                 
                 # Layer-specific mappings
                 if hf_key.startswith("layers."):
@@ -482,33 +478,31 @@ class Gemma3ForCausalLM(nn.Module):
                     if hf_key.endswith("post_attention_layernorm.weight"):
                         return f"model.layers.{layer_idx}.post_attention_layernorm.weight"
                     
-                    # Attention projections
+                    # Attention projections - ADD .linear for quantized layers
                     if "self_attn" in hf_key:
-                        # if hf_key.endswith("o_proj.weight"):
-                        #     return f"model.layers.{layer_idx}.self_attn.o_proj.weight"
-                        # elif hf_key.endswith("qkv_proj.weight"):
-                        #     return f"model.layers.{layer_idx}.self_attn.qkv_proj.weight"
                         # Query and Key norm mappings
                         if hf_key.endswith("q_norm.weight"):
                             return f"model.layers.{layer_idx}.self_attn.query_norm.weight"
                         elif hf_key.endswith("k_norm.weight"):
                             return f"model.layers.{layer_idx}.self_attn.key_norm.weight"
-                        # Individual Q, K, V projections
+                        # Individual Q, K, V projections - ADD .linear for quantized layers
                         elif hf_key.endswith("q_proj.weight"):
-                            return f"model.layers.{layer_idx}.self_attn.q_proj.weight"
+                            return f"model.layers.{layer_idx}.self_attn.q_proj.linear.weight"
                         elif hf_key.endswith("k_proj.weight"):
-                            return f"model.layers.{layer_idx}.self_attn.k_proj.weight"
+                            return f"model.layers.{layer_idx}.self_attn.k_proj.linear.weight"
                         elif hf_key.endswith("v_proj.weight"):
-                            return f"model.layers.{layer_idx}.self_attn.v_proj.weight"
+                            return f"model.layers.{layer_idx}.self_attn.v_proj.linear.weight"
+                        elif hf_key.endswith("o_proj.weight"):
+                            return f"model.layers.{layer_idx}.self_attn.o_proj.linear.weight"
                     
-                    # MLP projections
-                    # if "mlp" in hf_key:
-                    #     if hf_key.endswith("gate_proj.weight"):
-                    #         return f"model.layers.{layer_idx}.mlp.gate_proj.weight"
-                    #     elif hf_key.endswith("up_proj.weight"):
-                    #         return f"model.layers.{layer_idx}.mlp.up_proj.weight"
-                    #     elif hf_key.endswith("down_proj.weight"):
-                    #         return f"model.layers.{layer_idx}.mlp.down_proj.weight"
+                    # MLP projections - ADD .linear for quantized layers
+                    if "mlp" in hf_key:
+                        if hf_key.endswith("gate_proj.weight"):
+                            return f"model.layers.{layer_idx}.mlp.gate_proj.linear.weight"
+                        elif hf_key.endswith("up_proj.weight"):
+                            return f"model.layers.{layer_idx}.mlp.up_proj.linear.weight"
+                        elif hf_key.endswith("down_proj.weight"):
+                            return f"model.layers.{layer_idx}.mlp.down_proj.linear.weight"
             
             # If no mapping found, return original key
             return hf_key
@@ -1081,7 +1075,7 @@ class Gemma3ForMultimodalLM(nn.Module):
                 
                 # Output layer mapping
                 if stripped_key == "norm.weight":
-                    return "model.norm.weight"  # Change this to match your model's expectation
+                    return "model.norm.weight"
                 
                 # Layer-specific mappings
                 if stripped_key.startswith("layers."):
@@ -1096,33 +1090,31 @@ class Gemma3ForMultimodalLM(nn.Module):
                     if stripped_key.endswith("post_attention_layernorm.weight"):
                         return f"model.layers.{layer_idx}.post_attention_layernorm.weight"
                     
-                    # Attention projections
+                    # Attention projections - ADD .linear for quantized layers
                     if "self_attn" in stripped_key:
-                        if stripped_key.endswith("o_proj.weight"):
-                            return f"model.layers.{layer_idx}.self_attn.o_proj.weight"
-                        elif stripped_key.endswith("qkv_proj.weight"):
-                            return f"model.layers.{layer_idx}.self_attn.qkv_proj.weight"
                         # Query and Key norm mappings
-                        elif stripped_key.endswith("q_norm.weight"):
+                        if stripped_key.endswith("q_norm.weight"):
                             return f"model.layers.{layer_idx}.self_attn.query_norm.weight"
                         elif stripped_key.endswith("k_norm.weight"):
                             return f"model.layers.{layer_idx}.self_attn.key_norm.weight"
-                        # Individual Q, K, V projections (if they exist)
+                        # Individual Q, K, V projections - ADD .linear for quantized layers
                         elif stripped_key.endswith("q_proj.weight"):
-                            return f"model.layers.{layer_idx}.self_attn.q_proj.weight"
+                            return f"model.layers.{layer_idx}.self_attn.q_proj.linear.weight"
                         elif stripped_key.endswith("k_proj.weight"):
-                            return f"model.layers.{layer_idx}.self_attn.k_proj.weight"
+                            return f"model.layers.{layer_idx}.self_attn.k_proj.linear.weight"
                         elif stripped_key.endswith("v_proj.weight"):
-                            return f"model.layers.{layer_idx}.self_attn.v_proj.weight"
+                            return f"model.layers.{layer_idx}.self_attn.v_proj.linear.weight"
+                        elif stripped_key.endswith("o_proj.weight"):
+                            return f"model.layers.{layer_idx}.self_attn.o_proj.linear.weight"
                     
-                    # MLP projections
+                    # MLP projections - ADD .linear for quantized layers
                     if "mlp" in stripped_key:
                         if stripped_key.endswith("gate_proj.weight"):
-                            return f"model.layers.{layer_idx}.mlp.gate_proj.weight"
+                            return f"model.layers.{layer_idx}.mlp.gate_proj.linear.weight"
                         elif stripped_key.endswith("up_proj.weight"):
-                            return f"model.layers.{layer_idx}.mlp.up_proj.weight"
+                            return f"model.layers.{layer_idx}.mlp.up_proj.linear.weight"
                         elif stripped_key.endswith("down_proj.weight"):
-                            return f"model.layers.{layer_idx}.mlp.down_proj.weight"
+                            return f"model.layers.{layer_idx}.mlp.down_proj.linear.weight"
             
             # Handle keys without 'model.' prefix (original HF format)
             else:
@@ -1132,7 +1124,7 @@ class Gemma3ForMultimodalLM(nn.Module):
                 
                 # Output layer mapping
                 if hf_key == "norm.weight":
-                    return "model.norm.weight"  # Change this to match your model's expectation
+                    return "model.norm.weight"
                 
                 # Layer-specific mappings
                 if hf_key.startswith("layers."):
@@ -1147,33 +1139,31 @@ class Gemma3ForMultimodalLM(nn.Module):
                     if hf_key.endswith("post_attention_layernorm.weight"):
                         return f"model.layers.{layer_idx}.post_attention_layernorm.weight"
                     
-                    # Attention projections
+                    # Attention projections - ADD .linear for quantized layers
                     if "self_attn" in hf_key:
-                        if hf_key.endswith("o_proj.weight"):
-                            return f"model.layers.{layer_idx}.self_attn.o_proj.weight"
-                        elif hf_key.endswith("qkv_proj.weight"):
-                            return f"model.layers.{layer_idx}.self_attn.qkv_proj.weight"
                         # Query and Key norm mappings
-                        elif hf_key.endswith("q_norm.weight"):
+                        if hf_key.endswith("q_norm.weight"):
                             return f"model.layers.{layer_idx}.self_attn.query_norm.weight"
                         elif hf_key.endswith("k_norm.weight"):
                             return f"model.layers.{layer_idx}.self_attn.key_norm.weight"
-                        # Individual Q, K, V projections
+                        # Individual Q, K, V projections - ADD .linear for quantized layers
                         elif hf_key.endswith("q_proj.weight"):
-                            return f"model.layers.{layer_idx}.self_attn.q_proj.weight"
+                            return f"model.layers.{layer_idx}.self_attn.q_proj.linear.weight"
                         elif hf_key.endswith("k_proj.weight"):
-                            return f"model.layers.{layer_idx}.self_attn.k_proj.weight"
+                            return f"model.layers.{layer_idx}.self_attn.k_proj.linear.weight"
                         elif hf_key.endswith("v_proj.weight"):
-                            return f"model.layers.{layer_idx}.self_attn.v_proj.weight"
+                            return f"model.layers.{layer_idx}.self_attn.v_proj.linear.weight"
+                        elif hf_key.endswith("o_proj.weight"):
+                            return f"model.layers.{layer_idx}.self_attn.o_proj.linear.weight"
                     
-                    # MLP projections
+                    # MLP projections - ADD .linear for quantized layers
                     if "mlp" in hf_key:
                         if hf_key.endswith("gate_proj.weight"):
-                            return f"model.layers.{layer_idx}.mlp.gate_proj.weight"
+                            return f"model.layers.{layer_idx}.mlp.gate_proj.linear.weight"
                         elif hf_key.endswith("up_proj.weight"):
-                            return f"model.layers.{layer_idx}.mlp.up_proj.weight"
+                            return f"model.layers.{layer_idx}.mlp.up_proj.linear.weight"
                         elif hf_key.endswith("down_proj.weight"):
-                            return f"model.layers.{layer_idx}.mlp.down_proj.weight"
+                            return f"model.layers.{layer_idx}.mlp.down_proj.linear.weight"
             
             # If no mapping found, return original key
             return hf_key
@@ -1201,10 +1191,13 @@ class Gemma3ForMultimodalLM(nn.Module):
                     
                     if "q_proj.weight" in key:
                         qkv_groups[layer_idx]['q'] = weight
+                        print(f"Found Q proj for layer {layer_idx}: {weight.shape}")
                     elif "k_proj.weight" in key:
                         qkv_groups[layer_idx]['k'] = weight
+                        print(f"Found K proj for layer {layer_idx}: {weight.shape}")
                     elif "v_proj.weight" in key:
                         qkv_groups[layer_idx]['v'] = weight
+                        print(f"Found V proj for layer {layer_idx}: {weight.shape}")
             
             # Combine Q, K, V weights for each layer
             combined_count = 0
