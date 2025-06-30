@@ -152,6 +152,9 @@ class Gemma3ForCausalLM(nn.Module, GemmaModelLoader):
         self.model = Gemma3Model(config)
         self.sampler = Sampler(vocab_size, config)
 
+        self.quant = config.quant
+        self.qaunt_type = config.quant_type
+
         if config.rope_wave_length is None:
             raise ValueError("rope_wave_length must be provided for Gemma3.")
 

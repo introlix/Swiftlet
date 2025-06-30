@@ -155,6 +155,9 @@ class Gemma2ForCausalLM(nn.Module, GemmaModelLoader):
         self.model = Gemma2Model(config)
         self.sampler = Sampler(vocab_size, config)
 
+        self.quant = config.quant
+        self.qaunt_type = config.quant_type
+
         self._register_freqs_cis("freqs_cis", head_dim, max_seq_len)
 
     def _register_freqs_cis(
