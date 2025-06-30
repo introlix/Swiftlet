@@ -484,12 +484,12 @@ class Gemma3ForCausalLM(nn.Module):
                     
                     # Attention projections
                     if "self_attn" in hf_key:
-                        if hf_key.endswith("o_proj.weight"):
-                            return f"model.layers.{layer_idx}.self_attn.o_proj.weight"
-                        elif hf_key.endswith("qkv_proj.weight"):
-                            return f"model.layers.{layer_idx}.self_attn.qkv_proj.weight"
+                        # if hf_key.endswith("o_proj.weight"):
+                        #     return f"model.layers.{layer_idx}.self_attn.o_proj.weight"
+                        # elif hf_key.endswith("qkv_proj.weight"):
+                        #     return f"model.layers.{layer_idx}.self_attn.qkv_proj.weight"
                         # Query and Key norm mappings
-                        elif hf_key.endswith("q_norm.weight"):
+                        if hf_key.endswith("q_norm.weight"):
                             return f"model.layers.{layer_idx}.self_attn.query_norm.weight"
                         elif hf_key.endswith("k_norm.weight"):
                             return f"model.layers.{layer_idx}.self_attn.key_norm.weight"
@@ -502,13 +502,13 @@ class Gemma3ForCausalLM(nn.Module):
                             return f"model.layers.{layer_idx}.self_attn.v_proj.weight"
                     
                     # MLP projections
-                    if "mlp" in hf_key:
-                        if hf_key.endswith("gate_proj.weight"):
-                            return f"model.layers.{layer_idx}.mlp.gate_proj.weight"
-                        elif hf_key.endswith("up_proj.weight"):
-                            return f"model.layers.{layer_idx}.mlp.up_proj.weight"
-                        elif hf_key.endswith("down_proj.weight"):
-                            return f"model.layers.{layer_idx}.mlp.down_proj.weight"
+                    # if "mlp" in hf_key:
+                    #     if hf_key.endswith("gate_proj.weight"):
+                    #         return f"model.layers.{layer_idx}.mlp.gate_proj.weight"
+                    #     elif hf_key.endswith("up_proj.weight"):
+                    #         return f"model.layers.{layer_idx}.mlp.up_proj.weight"
+                    #     elif hf_key.endswith("down_proj.weight"):
+                    #         return f"model.layers.{layer_idx}.mlp.down_proj.weight"
             
             # If no mapping found, return original key
             return hf_key
