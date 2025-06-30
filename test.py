@@ -2,9 +2,7 @@ import torch
 from swiftlet.models.gemma.config import get_gemma_config
 from swiftlet.models.gemma.tokenizer import Tokenizer
 from swiftlet.models.gemma3.model import Gemma3ForCausalLM
-from transformers.models.gemma3 import Gemma3ForCausalLM
 
-test_model = Gemma3ForCausalLM.from_pretrained("swiftlet/models/gemma3")
 
 gemma3_config = get_gemma_config(variant="1b", tokenizer=Tokenizer(model_path="swiftlet/models/gemma/tokenizer.model"))
 
