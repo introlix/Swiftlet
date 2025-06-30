@@ -7,7 +7,6 @@ class Linear(nn.Module):
     def __init__(self, in_features: int, out_features: int, quant: bool, quant_type: str, bias: bool):
         super().__init__()
         self.quant = quant
-        
         if not quant:
             if quant_type:
                 raise ValueError("quant_type should not be specified when quant is False.")
