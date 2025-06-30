@@ -716,7 +716,8 @@ class GemmaForCausalLM(nn.Module):
                 if 'q' in qkv_dict and 'k' in qkv_dict and 'v' in qkv_dict:
                     # Concatenate Q, K, V weights along the output dimension (dim=0)
                     qkv_combined = torch.cat([qkv_dict['q'], qkv_dict['k'], qkv_dict['v']], dim=0)
-                    combined_key = f"model.layers.{layer_idx}.self_attn.qkv_proj.weight"
+                    # FIXED: Add .linear for quantized layers
+                    combined_key = f"model.layers.{layer_idx}.self_attn.qkv_proj.linear.weight"
                     combined_weights[combined_key] = qkv_combined
                     combined_count += 1
                 else:
