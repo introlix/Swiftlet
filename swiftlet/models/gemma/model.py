@@ -1,10 +1,6 @@
-import os
-import gc
-import json
 import torch
 from torch import nn
 import torch.nn.functional as F
-from safetensors.torch import load_file as load_safetensors
 from typing import Tuple, Mapping, List, Union, Optional, Any, Sequence
 import swiftlet.models.gemma.config as gemma_config
 from swiftlet.models.gemma.model_loader import GemmaModelLoader

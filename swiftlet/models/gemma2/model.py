@@ -1,9 +1,5 @@
-import os
-import json
-import gc
 import torch
 from torch import nn
-from safetensors.torch import load_file as load_safetensors
 from typing import Tuple, List, Mapping, Union, Sequence, Any
 import swiftlet.models.gemma.config as gemma_config
 from swiftlet.models.gemma import tokenizer
