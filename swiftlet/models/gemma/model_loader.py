@@ -8,18 +8,7 @@ class GemmaModelLoader:
     """
     A class to load the Gemma model from a specified path.
     """
-    def from_pretrained(self, model_path: str, map_location="cpu", quant: bool = False, quant_type: str = None):
-
-        if quant == True and quant_type is None:
-            raise ValueError("If quant is True, quant_dtype must be specified (e.g., 'int8', 'int4', 'fp4')")
-        
-        if quant == False and quant_type is not None:
-            quant = True
-
-        if quant:
-            self.quant = True
-            self.quant_type = quant_type
-        
+    def from_pretrained(self, model_path: str, map_location="cpu"):
 
         def _collect_safetensors_files(path):
             if os.path.isfile(path) and path.endswith(".safetensors"):

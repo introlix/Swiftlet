@@ -3,7 +3,7 @@ from torch import nn
 import torch.nn.functional as F
 from typing import Tuple, Mapping, List, Union, Optional, Any, Sequence
 import swiftlet.models.gemma.config as gemma_config
-from swiftlet.models.gemma.model_loader import GemmaModelLoader
+from swiftlet.kernels.pretrained_model import PreTrainedModel
 from swiftlet.models.gemma import tokenizer
 from swiftlet.kernels.embedding import Embedding
 from swiftlet.kernels.rmsnorm import RMSNorm
@@ -321,7 +321,7 @@ class GemmaModel(nn.Module):
         return hidden_states
 
 
-class GemmaForCausalLM(nn.Module, GemmaModelLoader):
+class GemmaForCausalLM(nn.Module, PreTrainedModel):
     def __init__(
         self,
         config: gemma_config.GemmaConfig,

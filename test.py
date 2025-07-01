@@ -5,6 +5,8 @@ from swiftlet.models.gemma3.model import Gemma3ForCausalLM
 
 
 gemma3_config = get_gemma_config(variant="1b", tokenizer=Tokenizer(model_path="swiftlet/models/gemma/tokenizer.model"))
+gemma3_config.quant = True  # Enable quantization
+gemma3_config.quant_type = "int8"  # Set quantization type, e
 
 model = Gemma3ForCausalLM(gemma3_config)
 

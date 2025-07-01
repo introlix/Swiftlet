@@ -12,7 +12,7 @@ from swiftlet.models.gemma.model import (
     GemmaMLP,
     GemmaAttention,
 )
-from swiftlet.models.gemma.model_loader import GemmaModelLoader
+from swiftlet.kernels.pretrained_model import PreTrainedModel
 from swiftlet.models.gemma import tokenizer
 from swiftlet.kernels.embedding import Embedding
 from swiftlet.kernels.siglip_vision import siglip_vision_model
@@ -135,7 +135,7 @@ class Gemma3Model(nn.Module):
         return hidden_states
 
 
-class Gemma3ForCausalLM(nn.Module, GemmaModelLoader):
+class Gemma3ForCausalLM(nn.Module, PreTrainedModel):
     def __init__(
         self,
         config: gemma_config.GemmaConfig,
@@ -384,7 +384,7 @@ class Gemma3ForCausalLM(nn.Module, GemmaModelLoader):
 
 
 # This is taken from https://github.com/google/gemma_pytorch/blob/main/gemma/gemma3_model.py#L30
-class Gemma3ForMultimodalLM(nn.Module, GemmaModelLoader):
+class Gemma3ForMultimodalLM(nn.Module, PreTrainedModel):
     """Gemma3 model for multimodal causal LM."""
 
     def __init__(
