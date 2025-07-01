@@ -10,7 +10,7 @@ from swiftlet.models.gemma.model import (
     Sampler,
     precompute_freqs_cis,
 )
-from swiftlet.models.gemma.model_loader import GemmaModelLoader
+from swiftlet.kernels.pretrained_model import PreTrainedModel
 from swiftlet.models.gemma import tokenizer
 from swiftlet.kernels.embedding import Embedding
 
@@ -138,12 +138,15 @@ class Gemma2Model(nn.Module):
         return hidden_states
 
 
-class Gemma2ForCausalLM(nn.Module, GemmaModelLoader):
+class Gemma2ForCausalLM(nn.Module, PreTrainedModel):
     def __init__(
         self,
         config: gemma_config.GemmaConfig,
+        custom_patterns = None
     ):
         super().__init__()
+        PreTrainedModel.__init__(self, custom_patterns)
+        
         self.config = config
         assert config.hidden_size % config.num_attention_heads == 0
         max_seq_len = config.max_position_embeddings

@@ -139,8 +139,13 @@ class Gemma3ForCausalLM(nn.Module, PreTrainedModel):
     def __init__(
         self,
         config: gemma_config.GemmaConfig,
+        custom_patterns = None,
     ):
         super().__init__()
+
+        PreTrainedModel.__init__(self, custom_patterns)
+
+
         self.config = config
         assert config.hidden_size % config.num_attention_heads == 0
         max_seq_len = config.max_position_embeddings
@@ -390,8 +395,11 @@ class Gemma3ForMultimodalLM(nn.Module, PreTrainedModel):
     def __init__(
         self,
         config: gemma_config.GemmaConfig,
+        custom_patterns = None,
     ):
         super().__init__()
+        PreTrainedModel.__init__(self, custom_patterns)
+
         self.dtype = config.get_dtype()
         assert config.architecture == gemma_config.Architecture.GEMMA_3
         self.config = config
