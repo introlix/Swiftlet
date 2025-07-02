@@ -16,7 +16,7 @@ class Linear(nn.Module):
                 raise ValueError("quant_type must be specified when quant is True. Available options: 'int8', 'int4' 'fp4'.")
             if quant_type == 'int8':
                 print("Using int8")
-                self.layer = bnb.nn.Linear8bitLt(
+                self.linear = bnb.nn.Linear8bitLt(
                     in_features,
                     out_features,
                     bias=bias,
@@ -25,7 +25,7 @@ class Linear(nn.Module):
             elif quant_type in ("int4", "nf4", "fp4"):
                 print(f"Using {quant_type}")
                 qtype = "nf4" if quant_type == "int4" else quant_type
-                self.fc_4bit = bnb.nn.Linear4bit(
+                self.linear = bnb.nn.Linear4bit(
                     in_features,
                     out_features,
                     bias=bias,
