@@ -413,6 +413,9 @@ class Gemma3ForMultimodalLM(nn.Module, PreTrainedModel):
         self.model = Gemma3Model(config)
         self.sampler = Sampler(vocab_size, config)
 
+        self.quant = config.quant
+        self.qaunt_type = config.quant_type
+
         if config.vision_config is None:
             raise ValueError("vision_config must be provided for Gemma3.")
         self.siglip_vision_model = siglip_vision_model.SiglipVisionModel(

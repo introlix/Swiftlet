@@ -14,84 +14,90 @@ class AutoParameterMapper:
     """
     Advanced parameter mapper that automatically handles various naming conventions
     without requiring manual mapping functions for each architecture change.
+    Enhanced for Gemma 2 and Gemma 3 compatibility.
     """
 
     def __init__(self, custom_patterns=None):
-        # Base transformation patterns - extensible and flexible
+        # Enhanced transformation patterns for Gemma 2/3 compatibility
         self.base_patterns = [
             # Handle model prefixes
             (r"^module\.", ""),  # Remove DataParallel wrapper
             (r"^model\.", ""),  # Remove model wrapper
             (r"^", "model."),  # Add model prefix
+            
+            # Gemma-specific layer normalization patterns (bidirectional)
+            (r"(.*)\.input_layernorm\.weight", r"\1.pre_feedforward_layernorm.weight"),
+            (r"(.*)\.pre_feedforward_layernorm\.weight", r"\1.input_layernorm.weight"),
+            (r"(.*)\.input_layernorm\.weight", r"\1.pre_attention_layernorm.weight"),
+            (r"(.*)\.pre_attention_layernorm\.weight", r"\1.input_layernorm.weight"),
+            (r"(.*)\.post_attention_layernorm\.weight", r"\1.post_feedforward_layernorm.weight"),
+            (r"(.*)\.post_feedforward_layernorm\.weight", r"\1.post_attention_layernorm.weight"),
+            
+            # Additional layer norm variations for Gemma
+            (r"(.*)\.input_layer_norm\.weight", r"\1.input_layernorm.weight"),
+            (r"(.*)\.input_layernorm\.weight", r"\1.input_layer_norm.weight"),
+            (r"(.*)\.pre_attn_norm\.weight", r"\1.input_layernorm.weight"),
+            (r"(.*)\.post_attn_norm\.weight", r"\1.post_attention_layernorm.weight"),
+            
             # Attention layer patterns (bidirectional)
-            (
-                r"(.*)\.self_attn\.q_proj\.linear\.(weight|bias)",
-                r"\1.self_attn.q_proj.\2",
-            ),
-            (
-                r"(.*)\.self_attn\.k_proj\.linear\.(weight|bias)",
-                r"\1.self_attn.k_proj.\2",
-            ),
-            (
-                r"(.*)\.self_attn\.v_proj\.linear\.(weight|bias)",
-                r"\1.self_attn.v_proj.\2",
-            ),
-            (
-                r"(.*)\.self_attn\.o_proj\.linear\.(weight|bias)",
-                r"\1.self_attn.o_proj.\2",
-            ),
+            (r"(.*)\.self_attn\.q_proj\.linear\.(weight|bias)", r"\1.self_attn.q_proj.\2"),
+            (r"(.*)\.self_attn\.k_proj\.linear\.(weight|bias)", r"\1.self_attn.k_proj.\2"),
+            (r"(.*)\.self_attn\.v_proj\.linear\.(weight|bias)", r"\1.self_attn.v_proj.\2"),
+            (r"(.*)\.self_attn\.o_proj\.linear\.(weight|bias)", r"\1.self_attn.o_proj.\2"),
+            
             # Reverse patterns for quantized layers
-            (
-                r"(.*)\.self_attn\.q_proj\.(weight|bias)",
-                r"\1.self_attn.q_proj.linear.\2",
-            ),
-            (
-                r"(.*)\.self_attn\.k_proj\.(weight|bias)",
-                r"\1.self_attn.k_proj.linear.\2",
-            ),
-            (
-                r"(.*)\.self_attn\.v_proj\.(weight|bias)",
-                r"\1.self_attn.v_proj.linear.\2",
-            ),
-            (
-                r"(.*)\.self_attn\.o_proj\.(weight|bias)",
-                r"\1.self_attn.o_proj.linear.\2",
-            ),
-            # MLP/FFN patterns (bidirectional)
+            (r"(.*)\.self_attn\.q_proj\.(weight|bias)", r"\1.self_attn.q_proj.linear.\2"),
+            (r"(.*)\.self_attn\.k_proj\.(weight|bias)", r"\1.self_attn.k_proj.linear.\2"),
+            (r"(.*)\.self_attn\.v_proj\.(weight|bias)", r"\1.self_attn.v_proj.linear.\2"),
+            (r"(.*)\.self_attn\.o_proj\.(weight|bias)", r"\1.self_attn.o_proj.linear.\2"),
+            
+            # MLP/FFN patterns (bidirectional) - Gemma uses gate_proj, up_proj, down_proj
             (r"(.*)\.mlp\.gate_proj\.linear\.(weight|bias)", r"\1.mlp.gate_proj.\2"),
             (r"(.*)\.mlp\.up_proj\.linear\.(weight|bias)", r"\1.mlp.up_proj.\2"),
             (r"(.*)\.mlp\.down_proj\.linear\.(weight|bias)", r"\1.mlp.down_proj.\2"),
+            
             # Reverse MLP patterns
             (r"(.*)\.mlp\.gate_proj\.(weight|bias)", r"\1.mlp.gate_proj.linear.\2"),
             (r"(.*)\.mlp\.up_proj\.(weight|bias)", r"\1.mlp.up_proj.linear.\2"),
             (r"(.*)\.mlp\.down_proj\.(weight|bias)", r"\1.mlp.down_proj.linear.\2"),
+            
             # Embedding patterns
             (r"embed_tokens\.weight", "embedder.weight"),
             (r"embedder\.weight", "embed_tokens.weight"),
             (r"word_embeddings\.weight", "embedder.weight"),
             (r"token_embeddings\.weight", "embedder.weight"),
-            # Normalization patterns
+            (r"model\.embed_tokens\.weight", "embedder.weight"),
+            (r"embedder\.weight", "model.embed_tokens.weight"),
+            
+            # Attention norm patterns for Gemma
             (r"(.*)\.query_norm\.weight", r"\1.q_norm.weight"),
             (r"(.*)\.key_norm\.weight", r"\1.k_norm.weight"),
             (r"(.*)\.q_norm\.weight", r"\1.query_norm.weight"),
             (r"(.*)\.k_norm\.weight", r"\1.key_norm.weight"),
-            # Layer norm variations
-            (r"(.*)\.input_layernorm\.weight", r"\1.input_layer_norm.weight"),
-            (r"(.*)\.post_attention_layernorm\.weight", r"\1.post_attn_norm.weight"),
-            (r"(.*)\.layer_norm\.weight", r"\1.layernorm.weight"),
-            (r"(.*)\.layernorm\.weight", r"\1.layer_norm.weight"),
-            # Output/final norm
+            
+            # Output/final norm patterns
             (r"^norm\.weight", "model.norm.weight"),
             (r"^model\.norm\.weight", "norm.weight"),
             (r"final_layer_norm\.weight", "norm.weight"),
+            (r"final_layernorm\.weight", "norm.weight"),
+            (r"ln_f\.weight", "norm.weight"),
+            
             # Handle layer indexing variations
             (r"layers\.(\d+)\.", r"layer.\1."),
             (r"layer\.(\d+)\.", r"layers.\1."),
             (r"h\.(\d+)\.", r"layers.\1."),
             (r"transformer\.h\.(\d+)\.", r"model.layers.\1."),
+            (r"transformer\.layers\.(\d+)\.", r"model.layers.\1."),
+            
             # QKV combination patterns
             (r"(.*)\.qkv_proj\.linear\.(weight|bias)", r"\1.qkv_proj.\2"),
             (r"(.*)\.qkv_proj\.(weight|bias)", r"\1.qkv_proj.linear.\2"),
+            
+            # Additional Gemma-specific patterns
+            (r"(.*)\.feed_forward\.", r"\1.mlp."),
+            (r"(.*)\.mlp\.", r"\1.feed_forward."),
+            (r"(.*)\.attention\.", r"\1.self_attn."),
+            (r"(.*)\.self_attn\.", r"\1.attention."),
         ]
 
         # Add custom patterns if provided
@@ -107,17 +113,19 @@ class AutoParameterMapper:
     def generate_key_variants(self, key: str) -> List[str]:
         """Generate all possible variants of a parameter key"""
         variants = {key}  # Start with original
-
-        # Apply all transformation patterns
-        for pattern_re, replacement in self.compiled_patterns:
-            for variant in list(variants):
-                if pattern_re.search(variant):
-                    new_variant = pattern_re.sub(replacement, variant)
-                    variants.add(new_variant)
+        
+        # Apply transformation patterns iteratively for better coverage
+        for _ in range(3):  # Multiple passes to catch complex transformations
+            current_variants = set(variants)
+            for pattern_re, replacement in self.compiled_patterns:
+                for variant in current_variants:
+                    if pattern_re.search(variant):
+                        new_variant = pattern_re.sub(replacement, variant)
+                        variants.add(new_variant)
 
         # Add common prefix/suffix variations
         additional_variants = set()
-        for variant in variants:
+        for variant in list(variants):
             # Module wrapper variations
             if variant.startswith("module."):
                 additional_variants.add(variant[7:])
@@ -129,6 +137,14 @@ class AutoParameterMapper:
                 additional_variants.add(variant[6:])
             elif not variant.startswith("module."):
                 additional_variants.add("model." + variant)
+                
+            # Special Gemma patterns
+            if "pre_feedforward_layernorm" in variant:
+                additional_variants.add(variant.replace("pre_feedforward_layernorm", "input_layernorm"))
+                additional_variants.add(variant.replace("pre_feedforward_layernorm", "pre_attention_layernorm"))
+            if "input_layernorm" in variant:
+                additional_variants.add(variant.replace("input_layernorm", "pre_feedforward_layernorm"))
+                additional_variants.add(variant.replace("input_layernorm", "pre_attention_layernorm"))
 
         variants.update(additional_variants)
         return list(variants)
@@ -144,28 +160,40 @@ class AutoParameterMapper:
 
         # Penalize very different lengths
         len_diff = abs(len(parts1) - len(parts2))
-        len_penalty = min(len_diff * 0.1, 0.3)
+        len_penalty = min(len_diff * 0.1, 0.4)
 
         # Bonus for matching endings (weight/bias matching is important)
         ending_bonus = 0
         if parts1 and parts2:
             if parts1[-1] == parts2[-1]:
-                ending_bonus = 0.2
+                ending_bonus = 0.3
             elif parts1[-1] in ["weight", "bias"] and parts2[-1] in ["weight", "bias"]:
-                ending_bonus = 0.1
+                ending_bonus = 0.15
 
         # Bonus for matching layer numbers
         layer_bonus = 0
         layer_match1 = re.search(r"\.(\d+)\.", key1)
         layer_match2 = re.search(r"\.(\d+)\.", key2)
-        if (
-            layer_match1
-            and layer_match2
-            and layer_match1.group(1) == layer_match2.group(1)
-        ):
-            layer_bonus = 0.1
+        if layer_match1 and layer_match2 and layer_match1.group(1) == layer_match2.group(1):
+            layer_bonus = 0.2
 
-        return base_score + ending_bonus + layer_bonus - len_penalty
+        # Bonus for matching component types (attention, mlp, etc.)
+        component_bonus = 0
+        components = ["self_attn", "mlp", "attention", "feed_forward"]
+        for comp in components:
+            if comp in key1 and comp in key2:
+                component_bonus = 0.1
+                break
+
+        # Bonus for matching projection types
+        proj_bonus = 0
+        projections = ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
+        for proj in projections:
+            if proj in key1 and proj in key2:
+                proj_bonus = 0.1
+                break
+
+        return base_score + ending_bonus + layer_bonus + component_bonus + proj_bonus - len_penalty
 
     def find_best_matches(
         self,
@@ -179,7 +207,17 @@ class AutoParameterMapper:
         mappings = {}
         used_targets = set()
 
-        for source_key in source_keys:
+        # Sort source keys to prioritize important parameters
+        priority_order = ["embed_tokens", "norm", "self_attn", "mlp"]
+        def get_priority(key):
+            for i, pattern in enumerate(priority_order):
+                if pattern in key:
+                    return i
+            return len(priority_order)
+        
+        sorted_source_keys = sorted(source_keys, key=get_priority)
+
+        for source_key in sorted_source_keys:
             if source_key in used_targets:
                 continue
 
@@ -191,11 +229,8 @@ class AutoParameterMapper:
             for variant in variants:
                 if variant in target_keys_set and variant not in used_targets:
                     # Check shape compatibility
-                    if (
-                        source_key in source_dict
-                        and variant in target_dict
-                        and source_dict[source_key].shape == target_dict[variant].shape
-                    ):
+                    if (source_key in source_dict and variant in target_dict and 
+                        source_dict[source_key].shape == target_dict[variant].shape):
                         score = 1.0  # Perfect match
                         if score > best_score:
                             best_score = score
@@ -208,17 +243,11 @@ class AutoParameterMapper:
                         continue
 
                     # Check shape compatibility first
-                    if (
-                        source_key in source_dict
-                        and target_key in target_dict
-                        and source_dict[source_key].shape
-                        == target_dict[target_key].shape
-                    ):
-
+                    if (source_key in source_dict and target_key in target_dict and 
+                        source_dict[source_key].shape == target_dict[target_key].shape):
+                        
                         score = self.calculate_similarity_score(source_key, target_key)
-                        if (
-                            score > best_score and score > 0.7
-                        ):  # Threshold for fuzzy matching
+                        if score > best_score and score > 0.6:  # Lower threshold for better matching
                             best_score = score
                             best_match = target_key
 
@@ -237,9 +266,7 @@ class AutoParameterMapper:
 
         # Group Q, K, V weights by layer
         for key, tensor in source_dict.items():
-            if "self_attn" in key and any(
-                proj in key for proj in ["q_proj", "k_proj", "v_proj"]
-            ):
+            if "self_attn" in key and any(proj in key for proj in ["q_proj", "k_proj", "v_proj"]):
                 # Extract layer identifier
                 layer_match = re.search(r"layers?\.(\d+)\.", key)
                 if layer_match:
@@ -265,7 +292,7 @@ class AutoParameterMapper:
                     # Combine tensors
                     combined_tensor = torch.cat([q_tensor, k_tensor, v_tensor], dim=0)
 
-                    # Generate target key
+                    # Generate target key variants
                     qkv_key_variants = [
                         f"model.layers.{layer_id}.self_attn.qkv_proj.weight",
                         f"model.layers.{layer_id}.self_attn.qkv_proj.linear.weight",
