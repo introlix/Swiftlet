@@ -23,7 +23,6 @@ class AutoParameterMapper:
             (r"^module\.", ""),  # Remove DataParallel wrapper
             (r"^model\.", ""),  # Remove model wrapper
             (r"^", "model."),  # Add model prefix
-            # --- Standard Linear Layer Patterns ---
             # Attention layer patterns (bidirectional)
             (
                 r"(.*)\.self_attn\.q_proj\.linear\.(weight|bias)",
@@ -41,6 +40,7 @@ class AutoParameterMapper:
                 r"(.*)\.self_attn\.o_proj\.linear\.(weight|bias)",
                 r"\1.self_attn.o_proj.\2",
             ),
+            # Reverse patterns for quantized layers
             (
                 r"(.*)\.self_attn\.q_proj\.(weight|bias)",
                 r"\1.self_attn.q_proj.linear.\2",
@@ -61,56 +61,10 @@ class AutoParameterMapper:
             (r"(.*)\.mlp\.gate_proj\.linear\.(weight|bias)", r"\1.mlp.gate_proj.\2"),
             (r"(.*)\.mlp\.up_proj\.linear\.(weight|bias)", r"\1.mlp.up_proj.\2"),
             (r"(.*)\.mlp\.down_proj\.linear\.(weight|bias)", r"\1.mlp.down_proj.\2"),
+            # Reverse MLP patterns
             (r"(.*)\.mlp\.gate_proj\.(weight|bias)", r"\1.mlp.gate_proj.linear.\2"),
             (r"(.*)\.mlp\.up_proj\.(weight|bias)", r"\1.mlp.up_proj.linear.\2"),
             (r"(.*)\.mlp\.down_proj\.(weight|bias)", r"\1.mlp.down_proj.linear.\2"),
-            # --- NEW: Patterns for Quantized Layers (e.g., using a '.layer' submodule) ---
-            # Attention layer patterns for '.layer' submodule (bidirectional)
-            (
-                r"(.*)\.self_attn\.q_proj\.layer\.(weight|bias)",
-                r"\1.self_attn.q_proj.\2",
-            ),
-            (
-                r"(.*)\.self_attn\.k_proj\.layer\.(weight|bias)",
-                r"\1.self_attn.k_proj.\2",
-            ),
-            (
-                r"(.*)\.self_attn\.v_proj\.layer\.(weight|bias)",
-                r"\1.self_attn.v_proj.\2",
-            ),
-            (
-                r"(.*)\.self_attn\.o_proj\.layer\.(weight|bias)",
-                r"\1.self_attn.o_proj.\2",
-            ),
-            (
-                r"(.*)\.self_attn\.q_proj\.(weight|bias)",
-                r"\1.self_attn.q_proj.layer.\2",
-            ),
-            (
-                r"(.*)\.self_attn\.k_proj\.(weight|bias)",
-                r"\1.self_attn.k_proj.layer.\2",
-            ),
-            (
-                r"(.*)\.self_attn\.v_proj\.(weight|bias)",
-                r"\1.self_attn.v_proj.layer.\2",
-            ),
-            (
-                r"(.*)\.self_attn\.o_proj\.(weight|bias)",
-                r"\1.self_attn.o_proj.layer.\2",
-            ),
-            # MLP/FFN patterns for '.layer' submodule (bidirectional)
-            (r"(.*)\.mlp\.gate_proj\.layer\.(weight|bias)", r"\1.mlp.gate_proj.\2"),
-            (r"(.*)\.mlp\.up_proj\.layer\.(weight|bias)", r"\1.mlp.up_proj.\2"),
-            (r"(.*)\.mlp\.down_proj\.layer\.(weight|bias)", r"\1.mlp.down_proj.\2"),
-            (r"(.*)\.mlp\.gate_proj\.(weight|bias)", r"\1.mlp.gate_proj.layer.\2"),
-            (r"(.*)\.mlp\.up_proj\.(weight|bias)", r"\1.mlp.up_proj.layer.\2"),
-            (r"(.*)\.mlp\.down_proj\.(weight|bias)", r"\1.mlp.down_proj.layer.\2"),
-            # --- QKV Combination Patterns (for all layer types) ---
-            (r"(.*)\.qkv_proj\.linear\.(weight|bias)", r"\1.qkv_proj.\2"),
-            (r"(.*)\.qkv_proj\.(weight|bias)", r"\1.qkv_proj.linear.\2"),
-            (r"(.*)\.qkv_proj\.layer\.(weight|bias)", r"\1.qkv_proj.\2"),  # NEW
-            (r"(.*)\.qkv_proj\.(weight|bias)", r"\1.qkv_proj.layer.\2"),  # NEW
-            # --- Other Common Patterns ---
             # Embedding patterns
             (r"embed_tokens\.weight", "embedder.weight"),
             (r"embedder\.weight", "embed_tokens.weight"),
@@ -135,6 +89,9 @@ class AutoParameterMapper:
             (r"layer\.(\d+)\.", r"layers.\1."),
             (r"h\.(\d+)\.", r"layers.\1."),
             (r"transformer\.h\.(\d+)\.", r"model.layers.\1."),
+            # QKV combination patterns
+            (r"(.*)\.qkv_proj\.linear\.(weight|bias)", r"\1.qkv_proj.\2"),
+            (r"(.*)\.qkv_proj\.(weight|bias)", r"\1.qkv_proj.linear.\2"),
         ]
 
         # Add custom patterns if provided
@@ -274,7 +231,7 @@ class AutoParameterMapper:
     def handle_qkv_combination(
         self, source_dict: Dict, target_dict: Dict
     ) -> Dict[str, torch.Tensor]:
-        """Handle QKV weight combination automatically."""
+        """Handle QKV weight combination automatically"""
         qkv_combinations = {}
         qkv_groups = defaultdict(dict)
 
@@ -283,61 +240,44 @@ class AutoParameterMapper:
             if "self_attn" in key and any(
                 proj in key for proj in ["q_proj", "k_proj", "v_proj"]
             ):
+                # Extract layer identifier
                 layer_match = re.search(r"layers?\.(\d+)\.", key)
                 if layer_match:
                     layer_id = layer_match.group(1)
 
-                    # Ensure we are handling weights only for concatenation
-                    if key.endswith(".weight"):
-                        if "q_proj" in key:
-                            qkv_groups[layer_id]["q_weight"] = (key, tensor)
-                        elif "k_proj" in key:
-                            qkv_groups[layer_id]["k_weight"] = (key, tensor)
-                        elif "v_proj" in key:
-                            qkv_groups[layer_id]["v_weight"] = (key, tensor)
-                    elif key.endswith(".bias"):
-                        if "q_proj" in key:
-                            qkv_groups[layer_id]["q_bias"] = (key, tensor)
-                        elif "k_proj" in key:
-                            qkv_groups[layer_id]["k_bias"] = (key, tensor)
-                        elif "v_proj" in key:
-                            qkv_groups[layer_id]["v_bias"] = (key, tensor)
+                    if "q_proj" in key:
+                        qkv_groups[layer_id]["q"] = (key, tensor)
+                    elif "k_proj" in key:
+                        qkv_groups[layer_id]["k"] = (key, tensor)
+                    elif "v_proj" in key:
+                        qkv_groups[layer_id]["v"] = (key, tensor)
 
         # Check if target expects combined QKV
         target_expects_qkv = any("qkv_proj" in key for key in target_dict.keys())
 
         if target_expects_qkv:
             for layer_id, qkv_dict in qkv_groups.items():
-                # Process weights
-                if (
-                    "q_weight" in qkv_dict
-                    and "k_weight" in qkv_dict
-                    and "v_weight" in qkv_dict
-                ):
-                    q_key, q_tensor = qkv_dict["q_weight"]
-                    k_key, k_tensor = qkv_dict["k_weight"]
-                    v_key, v_tensor = qkv_dict["v_weight"]
+                if len(qkv_dict) == 3:  # Have Q, K, V
+                    q_key, q_tensor = qkv_dict["q"]
+                    k_key, k_tensor = qkv_dict["k"]
+                    v_key, v_tensor = qkv_dict["v"]
 
+                    # Combine tensors
                     combined_tensor = torch.cat([q_tensor, k_tensor, v_tensor], dim=0)
 
-                    # Dynamically generate potential target keys using our patterns
-                    base_qkv_key = f"model.layers.{layer_id}.self_attn.qkv_proj.weight"
-                    qkv_key_variants = self.generate_key_variants(base_qkv_key)
+                    # Generate target key
+                    qkv_key_variants = [
+                        f"model.layers.{layer_id}.self_attn.qkv_proj.weight",
+                        f"model.layers.{layer_id}.self_attn.qkv_proj.linear.weight",
+                        f"layers.{layer_id}.self_attn.qkv_proj.weight",
+                        f"layers.{layer_id}.self_attn.qkv_proj.linear.weight",
+                    ]
 
                     for qkv_key in qkv_key_variants:
                         if qkv_key in target_dict:
                             if combined_tensor.shape == target_dict[qkv_key].shape:
                                 qkv_combinations[qkv_key] = combined_tensor
-                                break  # Found a match, move to next layer
-
-                # Process biases (if they exist)
-                if (
-                    "q_bias" in qkv_dict
-                    and "k_bias" in qkv_dict
-                    and "v_bias" in qkv_dict
-                ):
-                    # (Logic for combining biases is similar if needed)
-                    pass
+                                break
 
         return qkv_combinations
 
