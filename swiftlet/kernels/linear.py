@@ -22,7 +22,6 @@ class Linear(nn.Module):
                     has_fp16_weights=True
                 )
             elif quant_type in ("int4", "nf4", "fp4"):
-                print(f"Using {quant_type}")
                 qtype = "nf4" if quant_type == "int4" else quant_type
                 self.linear = bnb.nn.Linear4bit(
                     in_features,
