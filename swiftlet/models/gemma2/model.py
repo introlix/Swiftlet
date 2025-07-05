@@ -222,10 +222,10 @@ class Gemma2ForCausalLM(nn.Module, PreTrainedModel):
         )
         embedder_weight = self.embedder.weight
 
-        if self.config.quant:
-            embedder_weight = embedder_weight * self.embedder.weight_scaler.unsqueeze(
-                -1
-            )
+        # if self.config.quant:
+        #     embedder_weight = embedder_weight * self.embedder.weight_scaler.unsqueeze(
+        #         -1
+        #     )
         next_tokens, logits = self.sampler(
             embedding=embedder_weight,
             hidden_states=hidden_states,
