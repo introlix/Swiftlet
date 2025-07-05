@@ -440,20 +440,8 @@ class PreTrainedModel:
             final_state_dict.update(qkv_combinations)
 
             # Add mapped parameters
-            for source_key, target_key in mappings.items():
+            for source_key, target_key in tqdm(mappings.items(), desc="Mapping parameters", disable=not verbose):
                 final_state_dict[target_key] = processed_source[source_key]
-
-            # Calculate statistics
-            mapped_count = len(final_state_dict)
-            total_source = len(source_dict)
-            total_target = len(target_dict)
-
-            success_rate = (
-                (mapped_count / total_source) * 100 if total_source > 0 else 0
-            )
-            coverage_rate = (
-                (mapped_count / total_target) * 100 if total_target > 0 else 0
-            )
 
             # Find unmapped keys
             mapped_source_keys = set(mappings.keys())
