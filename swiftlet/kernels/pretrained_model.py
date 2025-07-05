@@ -4,6 +4,7 @@ import gc
 import torch
 import re
 import warnings
+from tqdm import tqdm
 from safetensors.torch import load_file as load_safetensors
 from collections import OrderedDict, defaultdict
 from typing import Dict, List, Tuple, Optional, Any
@@ -393,10 +394,6 @@ class PreTrainedModel:
 
         def _smart_parameter_mapping(source_dict, target_dict):
             """Apply smart parameter mapping with multiple strategies"""
-            if verbose:
-                print(f"🔄 Starting smart parameter mapping...")
-                print(f"   Source parameters: {len(source_dict)}")
-                print(f"   Target parameters: {len(target_dict)}")
 
             # Convert to float32 if needed
             processed_source = {}
@@ -409,8 +406,6 @@ class PreTrainedModel:
             qkv_combinations = self.mapper.handle_qkv_combination(
                 processed_source, target_dict
             )
-            if qkv_combinations and verbose:
-                print(f"   Combined QKV weights: {len(qkv_combinations)}")
 
             # Strategy 2: Find parameter mappings
             source_keys = list(processed_source.keys())
@@ -481,22 +476,6 @@ class PreTrainedModel:
             unmapped_source = set(source_dict.keys()) - mapped_source_keys
             unmapped_target = set(target_dict.keys()) - set(final_state_dict.keys())
 
-            if verbose:
-                print(f"✅ Parameter mapping completed:")
-                print(f"   Successfully mapped: {mapped_count}")
-                print(f"   Success rate: {success_rate:.1f}%")
-                print(f"   Target coverage: {coverage_rate:.1f}%")
-
-                if unmapped_source:
-                    print(
-                        f"   Unmapped source keys ({len(unmapped_source)}): {list(unmapped_source)[:3]}{'...' if len(unmapped_source) > 3 else ''}"
-                    )
-
-                if unmapped_target:
-                    print(
-                        f"   Missing target keys ({len(unmapped_target)}): {list(unmapped_target)[:3]}{'...' if len(unmapped_target) > 3 else ''}"
-                    )
-
             return final_state_dict, list(unmapped_target), list(unmapped_source)
 
         # Get target model state dict
@@ -505,13 +484,9 @@ class PreTrainedModel:
         # Try safetensors first
         safefiles = _collect_safetensors_files(model_path)
         if safefiles:
-            if verbose:
-                print(f"📁 Found {len(safefiles)} safetensors file(s)")
 
             raw_weights = {}
-            for f in safefiles:
-                if verbose:
-                    print(f"   Loading {os.path.basename(f)}")
+            for f in tqdm(safefiles, desc="Loading safetensors files", disable=not verbose):
                 raw_weights.update(_load_safetensors_file(f, map_location))
 
             if not raw_weights:
@@ -528,18 +503,6 @@ class PreTrainedModel:
             try:
                 self.load_state_dict(mapped_state_dict, strict=strict)
 
-                if verbose:
-                    print(f"✅ Successfully loaded model from safetensors")
-                    if not strict and (missing_keys or unmapped_keys):
-                        if missing_keys:
-                            print(
-                                f"⚠️  Missing {len(missing_keys)} parameters (using model defaults)"
-                            )
-                        if unmapped_keys:
-                            print(
-                                f"⚠️  {len(unmapped_keys)} source parameters were not used"
-                            )
-
             except Exception as e:
                 if strict:
                     raise RuntimeError(f"Failed to load model state dict: {e}")
@@ -550,8 +513,6 @@ class PreTrainedModel:
 
         # Fallback: PyTorch checkpoint
         if os.path.isfile(model_path):
-            if verbose:
-                print(f"📁 Loading PyTorch checkpoint: {model_path}")
 
             ckpt = torch.load(model_path, map_location=map_location)
             source_dict = (
@@ -563,16 +524,11 @@ class PreTrainedModel:
             )
 
             self.load_state_dict(mapped_state_dict, strict=strict)
-            if verbose:
-                print(f"✅ Successfully loaded PyTorch checkpoint")
             return
 
         # Fallback: Sharded PyTorch
         idx_path = os.path.join(model_path, "pytorch_model.bin.index.json")
         if os.path.isdir(model_path) and os.path.isfile(idx_path):
-            if verbose:
-                print(f"📁 Loading sharded PyTorch checkpoint from: {model_path}")
-
             with open(idx_path, "r", encoding="utf-8") as f:
                 index = json.load(f)
 
@@ -594,8 +550,6 @@ class PreTrainedModel:
             )
 
             self.load_state_dict(mapped_state_dict, strict=strict)
-            if verbose:
-                print(f"✅ Successfully loaded sharded PyTorch checkpoint")
             return
 
         raise FileNotFoundError(f"No checkpoint found at '{model_path}'")
