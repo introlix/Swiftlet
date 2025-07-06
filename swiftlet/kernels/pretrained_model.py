@@ -368,6 +368,10 @@ class PreTrainedModel:
             """Collect all safetensors files from a path"""
             if os.path.isfile(path) and path.endswith(".safetensors"):
                 return [path]
+            
+            safetensors_files = [os.path.join(path, f) for f in os.listdir(path) if f.endswith(".safetensors")]
+            if len(safetensors_files) == 1:
+                return safetensors_files
 
             idx = os.path.join(path, "model.safetensors.index.json")
             if os.path.isdir(path) and os.path.isfile(idx):
@@ -386,6 +390,10 @@ class PreTrainedModel:
                         if f.endswith(".safetensors")
                     ]
                 )
+            
+            raise FileNotFoundError(
+                f"No safetensors files found in '{path}'. Please check the path."
+            )
             return []
 
         def _load_safetensors_file(filepath, device):
@@ -443,6 +451,17 @@ class PreTrainedModel:
             for source_key, target_key in tqdm(mappings.items(), desc="Mapping parameters", disable=not verbose):
                 final_state_dict[target_key] = processed_source[source_key]
 
+            mapped_count = len(final_state_dict)
+            total_source = len(source_dict)
+            total_target = len(target_dict)
+
+            success_rate = (
+                (mapped_count / total_source) * 100 if total_source > 0 else 0
+            )
+            coverage_rate = (
+                (mapped_count / total_target) * 100 if total_target > 0 else 0
+            )
+
             # Find unmapped keys
             mapped_source_keys = set(mappings.keys())
             if qkv_combinations:
@@ -463,6 +482,22 @@ class PreTrainedModel:
 
             unmapped_source = set(source_dict.keys()) - mapped_source_keys
             unmapped_target = set(target_dict.keys()) - set(final_state_dict.keys())
+
+            if verbose:
+                print(f"✅ Parameter mapping completed:")
+                print(f"   Successfully mapped: {mapped_count}")
+                print(f"   Success rate: {success_rate:.1f}%")
+                print(f"   Target coverage: {coverage_rate:.1f}%")
+
+                if unmapped_source:
+                    print(
+                        f"   Unmapped source keys ({len(unmapped_source)}): {list(unmapped_source)[:3]}{'...' if len(unmapped_source) > 3 else ''}"
+                    )
+
+                if unmapped_target:
+                    print(
+                        f"   Missing target keys ({len(unmapped_target)}): {list(unmapped_target)[:3]}{'...' if len(unmapped_target) > 3 else ''}"
+                    )
 
             return final_state_dict, list(unmapped_target), list(unmapped_source)
 
