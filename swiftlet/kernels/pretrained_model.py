@@ -58,6 +58,40 @@ class AutoParameterMapper:
                 r"(.*)\.self_attn\.o_proj\.(weight|bias)",
                 r"\1.self_attn.o_proj.linear.\2",
             ),
+            # --- NEW: Global attention patterns for Gemma2 ---
+            # Global attention layer patterns (bidirectional)
+            (
+                r"(.*)\.global_attn\.q_proj\.linear\.(weight|bias)",
+                r"\1.global_attn.q_proj.\2",
+            ),
+            (
+                r"(.*)\.global_attn\.k_proj\.linear\.(weight|bias)",
+                r"\1.global_attn.k_proj.\2",
+            ),
+            (
+                r"(.*)\.global_attn\.v_proj\.linear\.(weight|bias)",
+                r"\1.global_attn.v_proj.\2",
+            ),
+            (
+                r"(.*)\.global_attn\.o_proj\.linear\.(weight|bias)",
+                r"\1.global_attn.o_proj.\2",
+            ),
+            (
+                r"(.*)\.global_attn\.q_proj\.(weight|bias)",
+                r"\1.global_attn.q_proj.linear.\2",
+            ),
+            (
+                r"(.*)\.global_attn\.k_proj\.(weight|bias)",
+                r"\1.global_attn.k_proj.linear.\2",
+            ),
+            (
+                r"(.*)\.global_attn\.v_proj\.(weight|bias)",
+                r"\1.global_attn.v_proj.linear.\2",
+            ),
+            (
+                r"(.*)\.global_attn\.o_proj\.(weight|bias)",
+                r"\1.global_attn.o_proj.linear.\2",
+            ),
             # MLP/FFN patterns (bidirectional)
             (r"(.*)\.mlp\.gate_proj\.linear\.(weight|bias)", r"\1.mlp.gate_proj.\2"),
             (r"(.*)\.mlp\.up_proj\.linear\.(weight|bias)", r"\1.mlp.up_proj.\2"),
@@ -99,6 +133,39 @@ class AutoParameterMapper:
                 r"(.*)\.self_attn\.o_proj\.(weight|bias)",
                 r"\1.self_attn.o_proj.layer.\2",
             ),
+            # --- NEW: Global attention patterns for '.layer' submodule ---
+            (
+                r"(.*)\.global_attn\.q_proj\.layer\.(weight|bias)",
+                r"\1.global_attn.q_proj.\2",
+            ),
+            (
+                r"(.*)\.global_attn\.k_proj\.layer\.(weight|bias)",
+                r"\1.global_attn.k_proj.\2",
+            ),
+            (
+                r"(.*)\.global_attn\.v_proj\.layer\.(weight|bias)",
+                r"\1.global_attn.v_proj.\2",
+            ),
+            (
+                r"(.*)\.global_attn\.o_proj\.layer\.(weight|bias)",
+                r"\1.global_attn.o_proj.\2",
+            ),
+            (
+                r"(.*)\.global_attn\.q_proj\.(weight|bias)",
+                r"\1.global_attn.q_proj.layer.\2",
+            ),
+            (
+                r"(.*)\.global_attn\.k_proj\.(weight|bias)",
+                r"\1.global_attn.k_proj.layer.\2",
+            ),
+            (
+                r"(.*)\.global_attn\.v_proj\.(weight|bias)",
+                r"\1.global_attn.v_proj.layer.\2",
+            ),
+            (
+                r"(.*)\.global_attn\.o_proj\.(weight|bias)",
+                r"\1.global_attn.o_proj.layer.\2",
+            ),
             # MLP/FFN patterns for '.layer' submodule (bidirectional)
             (r"(.*)\.mlp\.gate_proj\.layer\.(weight|bias)", r"\1.mlp.gate_proj.\2"),
             (r"(.*)\.mlp\.up_proj\.layer\.(weight|bias)", r"\1.mlp.up_proj.\2"),
@@ -111,12 +178,36 @@ class AutoParameterMapper:
             (r"(.*)\.qkv_proj\.(weight|bias)", r"\1.qkv_proj.linear.\2"),
             (r"(.*)\.qkv_proj\.layer\.(weight|bias)", r"\1.qkv_proj.\2"),  # NEW
             (r"(.*)\.qkv_proj\.(weight|bias)", r"\1.qkv_proj.layer.\2"),  # NEW
+            # --- NEW: Global attention QKV patterns ---
+            (
+                r"(.*)\.global_attn\.qkv_proj\.linear\.(weight|bias)",
+                r"\1.global_attn.qkv_proj.\2",
+            ),
+            (
+                r"(.*)\.global_attn\.qkv_proj\.(weight|bias)",
+                r"\1.global_attn.qkv_proj.linear.\2",
+            ),
+            (
+                r"(.*)\.global_attn\.qkv_proj\.layer\.(weight|bias)",
+                r"\1.global_attn.qkv_proj.\2",
+            ),
+            (
+                r"(.*)\.global_attn\.qkv_proj\.(weight|bias)",
+                r"\1.global_attn.qkv_proj.layer.\2",
+            ),
             # --- Other Common Patterns ---
             # Embedding patterns
             (r"embed_tokens\.weight", "embedder.weight"),
             (r"embedder\.weight", "embed_tokens.weight"),
             (r"word_embeddings\.weight", "embedder.weight"),
             (r"token_embeddings\.weight", "embedder.weight"),
+            # --- NEW: Frequency/Positional embedding patterns for Gemma2 ---
+            (r"^freqs_cis$", "model.freqs_cis"),
+            (r"^model\.freqs_cis$", "freqs_cis"),
+            (r"^rope\.freqs_cis$", "freqs_cis"),
+            (r"^freqs_cis$", "rope.freqs_cis"),
+            (r"^rotary_emb\.inv_freq$", "freqs_cis"),
+            (r"^freqs_cis$", "rotary_emb.inv_freq"),
             # Normalization patterns
             (r"(.*)\.query_norm\.weight", r"\1.q_norm.weight"),
             (r"(.*)\.key_norm\.weight", r"\1.k_norm.weight"),
@@ -136,6 +227,11 @@ class AutoParameterMapper:
             (r"layer\.(\d+)\.", r"layers.\1."),
             (r"h\.(\d+)\.", r"layers.\1."),
             (r"transformer\.h\.(\d+)\.", r"model.layers.\1."),
+            # --- NEW: Handle attention type variations ---
+            (r"(.*)\.attention\.", r"\1.self_attn."),
+            (r"(.*)\.self_attn\.", r"\1.attention."),
+            (r"(.*)\.attn\.", r"\1.self_attn."),
+            (r"(.*)\.self_attn\.", r"\1.attn."),
         ]
 
         # Add custom patterns if provided
@@ -279,14 +375,18 @@ class AutoParameterMapper:
         qkv_combinations = {}
         qkv_groups = defaultdict(dict)
 
-        # Group Q, K, V weights by layer
+        # Group Q, K, V weights by layer for both self_attn and global_attn
         for key, tensor in source_dict.items():
-            if "self_attn" in key and any(
-                proj in key for proj in ["q_proj", "k_proj", "v_proj"]
-            ):
+            # Handle both self_attn and global_attn
+            if any(
+                attn_type in key for attn_type in ["self_attn", "global_attn"]
+            ) and any(proj in key for proj in ["q_proj", "k_proj", "v_proj"]):
+                # Extract layer and attention type
                 layer_match = re.search(r"layers?\.(\d+)\.", key)
+                attn_type = "global_attn" if "global_attn" in key else "self_attn"
+
                 if layer_match:
-                    layer_id = layer_match.group(1)
+                    layer_id = f"{layer_match.group(1)}.{attn_type}"
 
                     # Ensure we are handling weights only for concatenation
                     if key.endswith(".weight"):
@@ -309,6 +409,9 @@ class AutoParameterMapper:
 
         if target_expects_qkv:
             for layer_id, qkv_dict in qkv_groups.items():
+                # Parse layer_id to get layer number and attention type
+                layer_num, attn_type = layer_id.split(".")
+
                 # Process weights
                 if (
                     "q_weight" in qkv_dict
@@ -322,7 +425,9 @@ class AutoParameterMapper:
                     combined_tensor = torch.cat([q_tensor, k_tensor, v_tensor], dim=0)
 
                     # Dynamically generate potential target keys using our patterns
-                    base_qkv_key = f"model.layers.{layer_id}.self_attn.qkv_proj.weight"
+                    base_qkv_key = (
+                        f"model.layers.{layer_num}.{attn_type}.qkv_proj.weight"
+                    )
                     qkv_key_variants = self.generate_key_variants(base_qkv_key)
 
                     for qkv_key in qkv_key_variants:
@@ -368,8 +473,12 @@ class PreTrainedModel:
             """Collect all safetensors files from a path"""
             if os.path.isfile(path) and path.endswith(".safetensors"):
                 return [path]
-            
-            safetensors_files = [os.path.join(path, f) for f in os.listdir(path) if f.endswith(".safetensors")]
+
+            safetensors_files = [
+                os.path.join(path, f)
+                for f in os.listdir(path)
+                if f.endswith(".safetensors")
+            ]
             if len(safetensors_files) == 1:
                 return safetensors_files
 
@@ -390,7 +499,7 @@ class PreTrainedModel:
                         if f.endswith(".safetensors")
                     ]
                 )
-            
+
             raise FileNotFoundError(
                 f"No safetensors files found in '{path}'. Please check the path."
             )
@@ -448,7 +557,9 @@ class PreTrainedModel:
             final_state_dict.update(qkv_combinations)
 
             # Add mapped parameters
-            for source_key, target_key in tqdm(mappings.items(), desc="Mapping parameters", disable=not verbose):
+            for source_key, target_key in tqdm(
+                mappings.items(), desc="Mapping parameters", disable=not verbose
+            ):
                 final_state_dict[target_key] = processed_source[source_key]
 
             mapped_count = len(final_state_dict)
@@ -509,7 +620,9 @@ class PreTrainedModel:
         if safefiles:
 
             raw_weights = {}
-            for f in tqdm(safefiles, desc="Loading safetensors files", disable=not verbose):
+            for f in tqdm(
+                safefiles, desc="Loading safetensors files", disable=not verbose
+            ):
                 raw_weights.update(_load_safetensors_file(f, map_location))
 
             if not raw_weights:
