@@ -2,13 +2,32 @@
 
 <p align="center"><strong>SwiftLet is a lightweight Python framework for running open-source Large Language Models (LLMs) locally using <code>safetensors</code>.</strong></p>
 
-<p>
-Swiftlet have collection of different LLMs. Right now we only have implemented gemma1, gemma2 and gemma3. Gemma3 vision does not work. More models will be added to repo in future. This is only for learning reimplementation of LLMs and ML models.
-</p>
+**Swiftlet** is a lightweight and educational framework that provides reimplementations of various Large Language Models (LLMs).  
+It is designed for **learning**, **experimentation**, and **local execution** of models — all without relying on external LLM libraries.
 
-<p>
-This project is currently in its early stages and focuses on enabling direct local execution of LLMs. Future updates will expand its capabilities with support for advanced features such as tool integration, file interaction, and modular extensions to improve local LLM workflows.
-</p>
+---
+
+## 🚀 Features
+
+- ✅ Local execution of supported LLMs  
+- ✅ Minimal dependencies, easy to understand  
+- 📦 Clean architecture for adding more models  
+- 🔍 Designed for research, prototyping, and educational use  
+- 🛠️ Open for contributions and experiments
+
+---
+
+## 🧠 Implemented Models
+
+| Model     | Status               | Notes                         |
+|-----------|----------------------|-------------------------------|
+| Gemma 1   | ✅ Working            | Text-only                     |
+| Gemma 2   | ✅ Working            | Text-only                     |
+| Gemma 3   | ✅ Partially Working  | Vision support not implemented |
+
+> ℹ️ More models will be added soon!
+
+---
 
 ## Planned Features
 
