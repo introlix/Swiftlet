@@ -473,14 +473,16 @@ class PreTrainedModel:
             """Collect all safetensors files from a path"""
             if os.path.isfile(path) and path.endswith(".safetensors"):
                 return [path]
+            
 
-            safetensors_files = [
-                os.path.join(path, f)
-                for f in os.listdir(path)
-                if f.endswith(".safetensors")
-            ]
-            if len(safetensors_files) == 1:
-                return safetensors_files
+            if os.path.isdir(path):
+                safetensors_files = [
+                    os.path.join(path, f)
+                    for f in os.listdir(path)
+                    if f.endswith(".safetensors")
+                ]
+                if len(safetensors_files) == 1:
+                    return safetensors_files
 
             idx = os.path.join(path, "model.safetensors.index.json")
             if os.path.isdir(path) and os.path.isfile(idx):
