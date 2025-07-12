@@ -502,9 +502,6 @@ class PreTrainedModel:
                     ]
                 )
 
-            raise FileNotFoundError(
-                f"No safetensors files found in '{path}'. Please check the path."
-            )
             return []
 
         def _load_safetensors_file(filepath, device):
