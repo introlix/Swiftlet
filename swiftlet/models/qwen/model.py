@@ -230,6 +230,7 @@ class QwenBlock(nn.Module):
             kv_write_indices=kv_write_indices,
             kv_cache=kv_cache,
             mask=mask,
+            local_mask=local_mask
         )
 
         hidden_states = residual + hidden_states
