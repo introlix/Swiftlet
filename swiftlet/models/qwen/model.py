@@ -208,7 +208,7 @@ class QwenBlock(nn.Module):
             intermediate_size=config.intermediate_size,
         )
 
-        self.input_layernorm = RMSNorm(config.hidden_size, esp=config.rms_norm_eps)
+        self.input_layernorm = RMSNorm(dim=config.hidden_size, esp=config.rms_norm_eps)
         self.post_attention_layernorm = RMSNorm(
             config.hidden_size, eps=config.rms_norm_eps
         )
