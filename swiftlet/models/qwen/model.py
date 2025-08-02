@@ -220,6 +220,7 @@ class QwenBlock(nn.Module):
         kv_write_indices: torch.Tensor,
         kv_cache: Tuple[torch.Tensor, torch.Tensor],
         mask: torch.Tensor,
+        local_mask: torch.Tensor
     ) -> torch.Tensor:
         residual = hidden_states
         hidden_states = self.input_layernorm(hidden_states)
