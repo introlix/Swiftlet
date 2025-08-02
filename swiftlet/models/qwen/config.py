@@ -29,5 +29,8 @@ class QwenConfig:
     use_cache: bool = True
     use_sliding_window: bool = False
 
+    def get_dtype(self) -> Optional[torch.dtype]:
+        """Gets the torch dtype from the config dtype string."""
+
 def get_config_for_1_5b_v2(tokenizer: Optional[str] = None, dtype: str = 'bfloat16') -> QwenConfig:
     return QwenConfig(dtype=dtype, tokenizer=tokenizer)
