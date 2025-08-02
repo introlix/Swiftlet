@@ -11,227 +11,221 @@ from typing import Dict, List, Tuple, Optional, Any
 from difflib import SequenceMatcher
 
 
-class AutoParameterMapper:
+class UniversalParameterMapper:
     """
-    Advanced parameter mapper that automatically handles various naming conventions
-    without requiring manual mapping functions for each architecture change.
+    Universal parameter mapper that automatically handles various naming conventions
+    for multiple LLM architectures including Gemma2, Qwen, and others.
     """
 
     def __init__(self, custom_patterns=None):
-        # Base transformation patterns - extensible and flexible
+        # Comprehensive transformation patterns for multiple architectures
         self.base_patterns = [
+            # ================================
+            # BASIC WRAPPER PATTERNS
+            # ================================
             # Handle model prefixes
             (r"^module\.", ""),  # Remove DataParallel wrapper
             (r"^model\.", ""),  # Remove model wrapper
             (r"^", "model."),  # Add model prefix
-            # --- Standard Linear Layer Patterns ---
-            # Attention layer patterns (bidirectional)
-            (
-                r"(.*)\.self_attn\.q_proj\.linear\.(weight|bias)",
-                r"\1.self_attn.q_proj.\2",
-            ),
-            (
-                r"(.*)\.self_attn\.k_proj\.linear\.(weight|bias)",
-                r"\1.self_attn.k_proj.\2",
-            ),
-            (
-                r"(.*)\.self_attn\.v_proj\.linear\.(weight|bias)",
-                r"\1.self_attn.v_proj.\2",
-            ),
-            (
-                r"(.*)\.self_attn\.o_proj\.linear\.(weight|bias)",
-                r"\1.self_attn.o_proj.\2",
-            ),
-            (
-                r"(.*)\.self_attn\.q_proj\.(weight|bias)",
-                r"\1.self_attn.q_proj.linear.\2",
-            ),
-            (
-                r"(.*)\.self_attn\.k_proj\.(weight|bias)",
-                r"\1.self_attn.k_proj.linear.\2",
-            ),
-            (
-                r"(.*)\.self_attn\.v_proj\.(weight|bias)",
-                r"\1.self_attn.v_proj.linear.\2",
-            ),
-            (
-                r"(.*)\.self_attn\.o_proj\.(weight|bias)",
-                r"\1.self_attn.o_proj.linear.\2",
-            ),
-            # --- NEW: Global attention patterns for Gemma2 ---
-            # Global attention layer patterns (bidirectional)
-            (
-                r"(.*)\.global_attn\.q_proj\.linear\.(weight|bias)",
-                r"\1.global_attn.q_proj.\2",
-            ),
-            (
-                r"(.*)\.global_attn\.k_proj\.linear\.(weight|bias)",
-                r"\1.global_attn.k_proj.\2",
-            ),
-            (
-                r"(.*)\.global_attn\.v_proj\.linear\.(weight|bias)",
-                r"\1.global_attn.v_proj.\2",
-            ),
-            (
-                r"(.*)\.global_attn\.o_proj\.linear\.(weight|bias)",
-                r"\1.global_attn.o_proj.\2",
-            ),
-            (
-                r"(.*)\.global_attn\.q_proj\.(weight|bias)",
-                r"\1.global_attn.q_proj.linear.\2",
-            ),
-            (
-                r"(.*)\.global_attn\.k_proj\.(weight|bias)",
-                r"\1.global_attn.k_proj.linear.\2",
-            ),
-            (
-                r"(.*)\.global_attn\.v_proj\.(weight|bias)",
-                r"\1.global_attn.v_proj.linear.\2",
-            ),
-            (
-                r"(.*)\.global_attn\.o_proj\.(weight|bias)",
-                r"\1.global_attn.o_proj.linear.\2",
-            ),
-            # MLP/FFN patterns (bidirectional)
+            
+            # ================================
+            # ATTENTION LAYER PATTERNS
+            # ================================
+            # Standard self-attention patterns (bidirectional)
+            (r"(.*)\.self_attn\.q_proj\.linear\.(weight|bias)", r"\1.self_attn.q_proj.\2"),
+            (r"(.*)\.self_attn\.k_proj\.linear\.(weight|bias)", r"\1.self_attn.k_proj.\2"),
+            (r"(.*)\.self_attn\.v_proj\.linear\.(weight|bias)", r"\1.self_attn.v_proj.\2"),
+            (r"(.*)\.self_attn\.o_proj\.linear\.(weight|bias)", r"\1.self_attn.o_proj.\2"),
+            (r"(.*)\.self_attn\.q_proj\.(weight|bias)", r"\1.self_attn.q_proj.linear.\2"),
+            (r"(.*)\.self_attn\.k_proj\.(weight|bias)", r"\1.self_attn.k_proj.linear.\2"),
+            (r"(.*)\.self_attn\.v_proj\.(weight|bias)", r"\1.self_attn.v_proj.linear.\2"),
+            (r"(.*)\.self_attn\.o_proj\.(weight|bias)", r"\1.self_attn.o_proj.linear.\2"),
+            
+            # Global attention patterns for Gemma2 (bidirectional)
+            (r"(.*)\.global_attn\.q_proj\.linear\.(weight|bias)", r"\1.global_attn.q_proj.\2"),
+            (r"(.*)\.global_attn\.k_proj\.linear\.(weight|bias)", r"\1.global_attn.k_proj.\2"),
+            (r"(.*)\.global_attn\.v_proj\.linear\.(weight|bias)", r"\1.global_attn.v_proj.\2"),
+            (r"(.*)\.global_attn\.o_proj\.linear\.(weight|bias)", r"\1.global_attn.o_proj.\2"),
+            (r"(.*)\.global_attn\.q_proj\.(weight|bias)", r"\1.global_attn.q_proj.linear.\2"),
+            (r"(.*)\.global_attn\.k_proj\.(weight|bias)", r"\1.global_attn.k_proj.linear.\2"),
+            (r"(.*)\.global_attn\.v_proj\.(weight|bias)", r"\1.global_attn.v_proj.linear.\2"),
+            (r"(.*)\.global_attn\.o_proj\.(weight|bias)", r"\1.global_attn.o_proj.linear.\2"),
+            
+            # Quantized layer patterns (using '.layer' submodule)
+            (r"(.*)\.self_attn\.q_proj\.layer\.(weight|bias)", r"\1.self_attn.q_proj.\2"),
+            (r"(.*)\.self_attn\.k_proj\.layer\.(weight|bias)", r"\1.self_attn.k_proj.\2"),
+            (r"(.*)\.self_attn\.v_proj\.layer\.(weight|bias)", r"\1.self_attn.v_proj.\2"),
+            (r"(.*)\.self_attn\.o_proj\.layer\.(weight|bias)", r"\1.self_attn.o_proj.\2"),
+            (r"(.*)\.self_attn\.q_proj\.(weight|bias)", r"\1.self_attn.q_proj.layer.\2"),
+            (r"(.*)\.self_attn\.k_proj\.(weight|bias)", r"\1.self_attn.k_proj.layer.\2"),
+            (r"(.*)\.self_attn\.v_proj\.(weight|bias)", r"\1.self_attn.v_proj.layer.\2"),
+            (r"(.*)\.self_attn\.o_proj\.(weight|bias)", r"\1.self_attn.o_proj.layer.\2"),
+            
+            # Global attention quantized patterns
+            (r"(.*)\.global_attn\.q_proj\.layer\.(weight|bias)", r"\1.global_attn.q_proj.\2"),
+            (r"(.*)\.global_attn\.k_proj\.layer\.(weight|bias)", r"\1.global_attn.k_proj.\2"),
+            (r"(.*)\.global_attn\.v_proj\.layer\.(weight|bias)", r"\1.global_attn.v_proj.\2"),
+            (r"(.*)\.global_attn\.o_proj\.layer\.(weight|bias)", r"\1.global_attn.o_proj.\2"),
+            (r"(.*)\.global_attn\.q_proj\.(weight|bias)", r"\1.global_attn.q_proj.layer.\2"),
+            (r"(.*)\.global_attn\.k_proj\.(weight|bias)", r"\1.global_attn.k_proj.layer.\2"),
+            (r"(.*)\.global_attn\.v_proj\.(weight|bias)", r"\1.global_attn.v_proj.layer.\2"),
+            (r"(.*)\.global_attn\.o_proj\.(weight|bias)", r"\1.global_attn.o_proj.layer.\2"),
+            
+            # ================================
+            # QWEN-SPECIFIC ATTENTION PATTERNS
+            # ================================
+            # Qwen attention patterns (c_attn is combined QKV, c_proj is output)
+            (r"(.*)\.attn\.c_attn\.(weight|bias)", r"\1.self_attn.qkv_proj.\2"),
+            (r"(.*)\.attn\.c_proj\.(weight|bias)", r"\1.self_attn.o_proj.\2"),
+            (r"(.*)\.self_attn\.qkv_proj\.(weight|bias)", r"\1.attn.c_attn.\2"),
+            (r"(.*)\.self_attn\.o_proj\.(weight|bias)", r"\1.attn.c_proj.\2"),
+            
+            # Additional Qwen attention variations
+            (r"(.*)\.attention\.(weight|bias)", r"\1.self_attn.\2"),
+            (r"(.*)\.self_attn\.(weight|bias)", r"\1.attention.\2"),
+            (r"(.*)\.attn\.(weight|bias)", r"\1.self_attn.\2"),
+            (r"(.*)\.self_attn\.(weight|bias)", r"\1.attn.\2"),
+            
+            # ================================
+            # QKV COMBINATION PATTERNS
+            # ================================
+            # Standard QKV patterns (all layer types)
+            (r"(.*)\.qkv_proj\.linear\.(weight|bias)", r"\1.qkv_proj.\2"),
+            (r"(.*)\.qkv_proj\.(weight|bias)", r"\1.qkv_proj.linear.\2"),
+            (r"(.*)\.qkv_proj\.layer\.(weight|bias)", r"\1.qkv_proj.\2"),
+            (r"(.*)\.qkv_proj\.(weight|bias)", r"\1.qkv_proj.layer.\2"),
+            
+            # Global attention QKV patterns
+            (r"(.*)\.global_attn\.qkv_proj\.linear\.(weight|bias)", r"\1.global_attn.qkv_proj.\2"),
+            (r"(.*)\.global_attn\.qkv_proj\.(weight|bias)", r"\1.global_attn.qkv_proj.linear.\2"),
+            (r"(.*)\.global_attn\.qkv_proj\.layer\.(weight|bias)", r"\1.global_attn.qkv_proj.\2"),
+            (r"(.*)\.global_attn\.qkv_proj\.(weight|bias)", r"\1.global_attn.qkv_proj.layer.\2"),
+            
+            # ================================
+            # MLP/FFN PATTERNS
+            # ================================
+            # Standard MLP patterns (bidirectional)
             (r"(.*)\.mlp\.gate_proj\.linear\.(weight|bias)", r"\1.mlp.gate_proj.\2"),
             (r"(.*)\.mlp\.up_proj\.linear\.(weight|bias)", r"\1.mlp.up_proj.\2"),
             (r"(.*)\.mlp\.down_proj\.linear\.(weight|bias)", r"\1.mlp.down_proj.\2"),
             (r"(.*)\.mlp\.gate_proj\.(weight|bias)", r"\1.mlp.gate_proj.linear.\2"),
             (r"(.*)\.mlp\.up_proj\.(weight|bias)", r"\1.mlp.up_proj.linear.\2"),
             (r"(.*)\.mlp\.down_proj\.(weight|bias)", r"\1.mlp.down_proj.linear.\2"),
-            # --- NEW: Patterns for Quantized Layers (e.g., using a '.layer' submodule) ---
-            # Attention layer patterns for '.layer' submodule (bidirectional)
-            (
-                r"(.*)\.self_attn\.q_proj\.layer\.(weight|bias)",
-                r"\1.self_attn.q_proj.\2",
-            ),
-            (
-                r"(.*)\.self_attn\.k_proj\.layer\.(weight|bias)",
-                r"\1.self_attn.k_proj.\2",
-            ),
-            (
-                r"(.*)\.self_attn\.v_proj\.layer\.(weight|bias)",
-                r"\1.self_attn.v_proj.\2",
-            ),
-            (
-                r"(.*)\.self_attn\.o_proj\.layer\.(weight|bias)",
-                r"\1.self_attn.o_proj.\2",
-            ),
-            (
-                r"(.*)\.self_attn\.q_proj\.(weight|bias)",
-                r"\1.self_attn.q_proj.layer.\2",
-            ),
-            (
-                r"(.*)\.self_attn\.k_proj\.(weight|bias)",
-                r"\1.self_attn.k_proj.layer.\2",
-            ),
-            (
-                r"(.*)\.self_attn\.v_proj\.(weight|bias)",
-                r"\1.self_attn.v_proj.layer.\2",
-            ),
-            (
-                r"(.*)\.self_attn\.o_proj\.(weight|bias)",
-                r"\1.self_attn.o_proj.layer.\2",
-            ),
-            # --- NEW: Global attention patterns for '.layer' submodule ---
-            (
-                r"(.*)\.global_attn\.q_proj\.layer\.(weight|bias)",
-                r"\1.global_attn.q_proj.\2",
-            ),
-            (
-                r"(.*)\.global_attn\.k_proj\.layer\.(weight|bias)",
-                r"\1.global_attn.k_proj.\2",
-            ),
-            (
-                r"(.*)\.global_attn\.v_proj\.layer\.(weight|bias)",
-                r"\1.global_attn.v_proj.\2",
-            ),
-            (
-                r"(.*)\.global_attn\.o_proj\.layer\.(weight|bias)",
-                r"\1.global_attn.o_proj.\2",
-            ),
-            (
-                r"(.*)\.global_attn\.q_proj\.(weight|bias)",
-                r"\1.global_attn.q_proj.layer.\2",
-            ),
-            (
-                r"(.*)\.global_attn\.k_proj\.(weight|bias)",
-                r"\1.global_attn.k_proj.layer.\2",
-            ),
-            (
-                r"(.*)\.global_attn\.v_proj\.(weight|bias)",
-                r"\1.global_attn.v_proj.layer.\2",
-            ),
-            (
-                r"(.*)\.global_attn\.o_proj\.(weight|bias)",
-                r"\1.global_attn.o_proj.layer.\2",
-            ),
-            # MLP/FFN patterns for '.layer' submodule (bidirectional)
+            
+            # Quantized MLP patterns
             (r"(.*)\.mlp\.gate_proj\.layer\.(weight|bias)", r"\1.mlp.gate_proj.\2"),
             (r"(.*)\.mlp\.up_proj\.layer\.(weight|bias)", r"\1.mlp.up_proj.\2"),
             (r"(.*)\.mlp\.down_proj\.layer\.(weight|bias)", r"\1.mlp.down_proj.\2"),
             (r"(.*)\.mlp\.gate_proj\.(weight|bias)", r"\1.mlp.gate_proj.layer.\2"),
             (r"(.*)\.mlp\.up_proj\.(weight|bias)", r"\1.mlp.up_proj.layer.\2"),
             (r"(.*)\.mlp\.down_proj\.(weight|bias)", r"\1.mlp.down_proj.layer.\2"),
-            # --- QKV Combination Patterns (for all layer types) ---
-            (r"(.*)\.qkv_proj\.linear\.(weight|bias)", r"\1.qkv_proj.\2"),
-            (r"(.*)\.qkv_proj\.(weight|bias)", r"\1.qkv_proj.linear.\2"),
-            (r"(.*)\.qkv_proj\.layer\.(weight|bias)", r"\1.qkv_proj.\2"),  # NEW
-            (r"(.*)\.qkv_proj\.(weight|bias)", r"\1.qkv_proj.layer.\2"),  # NEW
-            # --- NEW: Global attention QKV patterns ---
-            (
-                r"(.*)\.global_attn\.qkv_proj\.linear\.(weight|bias)",
-                r"\1.global_attn.qkv_proj.\2",
-            ),
-            (
-                r"(.*)\.global_attn\.qkv_proj\.(weight|bias)",
-                r"\1.global_attn.qkv_proj.linear.\2",
-            ),
-            (
-                r"(.*)\.global_attn\.qkv_proj\.layer\.(weight|bias)",
-                r"\1.global_attn.qkv_proj.\2",
-            ),
-            (
-                r"(.*)\.global_attn\.qkv_proj\.(weight|bias)",
-                r"\1.global_attn.qkv_proj.layer.\2",
-            ),
-            # --- Other Common Patterns ---
-            # Embedding patterns
+            
+            # Qwen MLP patterns (w1=gate, w2=down, w3=up)
+            (r"(.*)\.mlp\.w1\.(weight|bias)", r"\1.mlp.gate_proj.\2"),
+            (r"(.*)\.mlp\.w2\.(weight|bias)", r"\1.mlp.down_proj.\2"),
+            (r"(.*)\.mlp\.w3\.(weight|bias)", r"\1.mlp.up_proj.\2"),
+            (r"(.*)\.mlp\.gate_proj\.(weight|bias)", r"\1.mlp.w1.\2"),
+            (r"(.*)\.mlp\.down_proj\.(weight|bias)", r"\1.mlp.w2.\2"),
+            (r"(.*)\.mlp\.up_proj\.(weight|bias)", r"\1.mlp.w3.\2"),
+            
+            # Alternative MLP naming
+            (r"(.*)\.feed_forward\.w1\.(weight|bias)", r"\1.mlp.gate_proj.\2"),
+            (r"(.*)\.feed_forward\.w2\.(weight|bias)", r"\1.mlp.down_proj.\2"),
+            (r"(.*)\.feed_forward\.w3\.(weight|bias)", r"\1.mlp.up_proj.\2"),
+            
+            # ================================
+            # EMBEDDING PATTERNS
+            # ================================
+            # Token embeddings
             (r"embed_tokens\.weight", "embedder.weight"),
             (r"embedder\.weight", "embed_tokens.weight"),
             (r"word_embeddings\.weight", "embedder.weight"),
             (r"token_embeddings\.weight", "embedder.weight"),
-            # --- NEW: Frequency/Positional embedding patterns for Gemma2 ---
+            (r"transformer\.wte\.weight", "model.embed_tokens.weight"),
+            (r"model\.embed_tokens\.weight", "transformer.wte.weight"),
+            (r"embeddings\.word_embeddings\.weight", "model.embed_tokens.weight"),
+            
+            # Position embeddings
+            (r"embeddings\.position_embeddings\.weight", "model.embed_positions.weight"),
+            (r"transformer\.wpe\.weight", "model.embed_positions.weight"),
+            
+            # ================================
+            # FREQUENCY/ROTARY EMBEDDING PATTERNS
+            # ================================
+            # Frequency embeddings for Gemma2/RoPE
             (r"^freqs_cis$", "model.freqs_cis"),
             (r"^model\.freqs_cis$", "freqs_cis"),
             (r"^rope\.freqs_cis$", "freqs_cis"),
             (r"^freqs_cis$", "rope.freqs_cis"),
             (r"^rotary_emb\.inv_freq$", "freqs_cis"),
             (r"^freqs_cis$", "rotary_emb.inv_freq"),
-            # Normalization patterns
+            (r"^embed_positions\.inv_freq$", "freqs_cis"),
+            
+            # ================================
+            # NORMALIZATION PATTERNS
+            # ================================
+            # Query/Key normalization
             (r"(.*)\.query_norm\.weight", r"\1.q_norm.weight"),
             (r"(.*)\.key_norm\.weight", r"\1.k_norm.weight"),
             (r"(.*)\.q_norm\.weight", r"\1.query_norm.weight"),
             (r"(.*)\.k_norm\.weight", r"\1.key_norm.weight"),
-            # Layer norm variations
+            
+            # Layer normalization variations
             (r"(.*)\.input_layernorm\.weight", r"\1.input_layer_norm.weight"),
+            (r"(.*)\.input_layer_norm\.weight", r"\1.input_layernorm.weight"),
             (r"(.*)\.post_attention_layernorm\.weight", r"\1.post_attn_norm.weight"),
+            (r"(.*)\.post_attn_norm\.weight", r"\1.post_attention_layernorm.weight"),
             (r"(.*)\.layer_norm\.weight", r"\1.layernorm.weight"),
             (r"(.*)\.layernorm\.weight", r"\1.layer_norm.weight"),
-            # Output/final norm
+            
+            # Qwen-specific normalization
+            (r"(.*)\.ln_1\.weight", r"\1.input_layernorm.weight"),
+            (r"(.*)\.ln_2\.weight", r"\1.post_attention_layernorm.weight"),
+            (r"(.*)\.input_layernorm\.weight", r"\1.ln_1.weight"),
+            (r"(.*)\.post_attention_layernorm\.weight", r"\1.ln_2.weight"),
+            
+            # Final/output normalization
             (r"^norm\.weight", "model.norm.weight"),
             (r"^model\.norm\.weight", "norm.weight"),
             (r"final_layer_norm\.weight", "norm.weight"),
-            # Handle layer indexing variations
+            (r"transformer\.ln_f\.weight", "model.norm.weight"),
+            (r"model\.norm\.weight", "transformer.ln_f.weight"),
+            
+            # ================================
+            # LAYER INDEXING PATTERNS
+            # ================================
+            # Layer indexing variations
             (r"layers\.(\d+)\.", r"layer.\1."),
             (r"layer\.(\d+)\.", r"layers.\1."),
             (r"h\.(\d+)\.", r"layers.\1."),
             (r"transformer\.h\.(\d+)\.", r"model.layers.\1."),
-            # --- NEW: Handle attention type variations ---
+            (r"model\.layers\.(\d+)\.", r"transformer.h.\1."),
+            (r"blocks\.(\d+)\.", r"layers.\1."),
+            (r"decoder\.layers\.(\d+)\.", r"model.layers.\1."),
+            
+            # ================================
+            # OUTPUT HEAD PATTERNS
+            # ================================
+            # Language model head
+            (r"lm_head\.weight", "model.lm_head.weight"),
+            (r"model\.lm_head\.weight", "lm_head.weight"),
+            (r"output\.weight", "lm_head.weight"),
+            (r"classifier\.weight", "lm_head.weight"),
+            
+            # ================================
+            # ARCHITECTURE-SPECIFIC PATTERNS
+            # ================================
+            # Handle different attention naming conventions
             (r"(.*)\.attention\.", r"\1.self_attn."),
             (r"(.*)\.self_attn\.", r"\1.attention."),
             (r"(.*)\.attn\.", r"\1.self_attn."),
             (r"(.*)\.self_attn\.", r"\1.attn."),
+            
+            # Handle different MLP naming conventions
+            (r"(.*)\.feed_forward\.", r"\1.mlp."),
+            (r"(.*)\.mlp\.", r"\1.feed_forward."),
+            (r"(.*)\.ffn\.", r"\1.mlp."),
+            (r"(.*)\.mlp\.", r"\1.ffn."),
         ]
 
         # Add custom patterns if provided
@@ -248,16 +242,19 @@ class AutoParameterMapper:
         """Generate all possible variants of a parameter key"""
         variants = {key}  # Start with original
 
-        # Apply all transformation patterns
-        for pattern_re, replacement in self.compiled_patterns:
-            for variant in list(variants):
-                if pattern_re.search(variant):
-                    new_variant = pattern_re.sub(replacement, variant)
-                    variants.add(new_variant)
+        # Apply all transformation patterns iteratively
+        for _ in range(3):  # Multiple iterations to catch chain transformations
+            new_variants = set()
+            for pattern_re, replacement in self.compiled_patterns:
+                for variant in variants:
+                    if pattern_re.search(variant):
+                        new_variant = pattern_re.sub(replacement, variant)
+                        new_variants.add(new_variant)
+            variants.update(new_variants)
 
         # Add common prefix/suffix variations
         additional_variants = set()
-        for variant in variants:
+        for variant in list(variants):
             # Module wrapper variations
             if variant.startswith("module."):
                 additional_variants.add(variant[7:])
@@ -371,41 +368,59 @@ class AutoParameterMapper:
     def handle_qkv_combination(
         self, source_dict: Dict, target_dict: Dict
     ) -> Dict[str, torch.Tensor]:
-        """Handle QKV weight combination automatically."""
+        """Handle QKV weight and bias combination automatically for all attention types."""
         qkv_combinations = {}
         qkv_groups = defaultdict(dict)
 
-        # Group Q, K, V weights by layer for both self_attn and global_attn
+        # Group Q, K, V weights and biases by layer for all attention types
+        attention_types = ["self_attn", "global_attn", "attn", "attention"]
+        projection_types = ["q_proj", "k_proj", "v_proj", "query", "key", "value"]
+        
         for key, tensor in source_dict.items():
-            # Handle both self_attn and global_attn
-            if any(
-                attn_type in key for attn_type in ["self_attn", "global_attn"]
-            ) and any(proj in key for proj in ["q_proj", "k_proj", "v_proj"]):
-                # Extract layer and attention type
+            # Check if this is an attention-related parameter
+            has_attention = any(attn_type in key for attn_type in attention_types)
+            has_projection = any(proj in key for proj in projection_types)
+            
+            if has_attention and has_projection:
+                # Extract layer number and attention type
                 layer_match = re.search(r"layers?\.(\d+)\.", key)
-                attn_type = "global_attn" if "global_attn" in key else "self_attn"
+                if not layer_match:
+                    layer_match = re.search(r"h\.(\d+)\.", key)  # Qwen style
+                if not layer_match:
+                    continue
+                    
+                layer_num = layer_match.group(1)
+                
+                # Determine attention type
+                if "global_attn" in key:
+                    attn_type = "global_attn"
+                elif "self_attn" in key:
+                    attn_type = "self_attn"
+                elif "attention" in key:
+                    attn_type = "attention"
+                else:
+                    attn_type = "attn"
+                
+                layer_id = f"{layer_num}.{attn_type}"
 
-                if layer_match:
-                    layer_id = f"{layer_match.group(1)}.{attn_type}"
-
-                    # Ensure we are handling weights only for concatenation
-                    if key.endswith(".weight"):
-                        if "q_proj" in key:
-                            qkv_groups[layer_id]["q_weight"] = (key, tensor)
-                        elif "k_proj" in key:
-                            qkv_groups[layer_id]["k_weight"] = (key, tensor)
-                        elif "v_proj" in key:
-                            qkv_groups[layer_id]["v_weight"] = (key, tensor)
-                    elif key.endswith(".bias"):
-                        if "q_proj" in key:
-                            qkv_groups[layer_id]["q_bias"] = (key, tensor)
-                        elif "k_proj" in key:
-                            qkv_groups[layer_id]["k_bias"] = (key, tensor)
-                        elif "v_proj" in key:
-                            qkv_groups[layer_id]["v_bias"] = (key, tensor)
+                # Handle both weights and biases
+                if key.endswith(".weight"):
+                    if any(q_name in key for q_name in ["q_proj", "query"]):
+                        qkv_groups[layer_id]["q_weight"] = (key, tensor)
+                    elif any(k_name in key for k_name in ["k_proj", "key"]):
+                        qkv_groups[layer_id]["k_weight"] = (key, tensor)
+                    elif any(v_name in key for v_name in ["v_proj", "value"]):
+                        qkv_groups[layer_id]["v_weight"] = (key, tensor)
+                elif key.endswith(".bias"):
+                    if any(q_name in key for q_name in ["q_proj", "query"]):
+                        qkv_groups[layer_id]["q_bias"] = (key, tensor)
+                    elif any(k_name in key for k_name in ["k_proj", "key"]):
+                        qkv_groups[layer_id]["k_bias"] = (key, tensor)
+                    elif any(v_name in key for v_name in ["v_proj", "value"]):
+                        qkv_groups[layer_id]["v_bias"] = (key, tensor)
 
         # Check if target expects combined QKV
-        target_expects_qkv = any("qkv_proj" in key for key in target_dict.keys())
+        target_expects_qkv = any("qkv_proj" in key or "c_attn" in key for key in target_dict.keys())
 
         if target_expects_qkv:
             for layer_id, qkv_dict in qkv_groups.items():
@@ -422,39 +437,71 @@ class AutoParameterMapper:
                     k_key, k_tensor = qkv_dict["k_weight"]
                     v_key, v_tensor = qkv_dict["v_weight"]
 
-                    combined_tensor = torch.cat([q_tensor, k_tensor, v_tensor], dim=0)
+                    combined_weight = torch.cat([q_tensor, k_tensor, v_tensor], dim=0)
 
-                    # Dynamically generate potential target keys using our patterns
-                    base_qkv_key = (
-                        f"model.layers.{layer_num}.{attn_type}.qkv_proj.weight"
-                    )
-                    qkv_key_variants = self.generate_key_variants(base_qkv_key)
+                    # Generate potential target keys for different architectures
+                    potential_keys = [
+                        f"model.layers.{layer_num}.{attn_type}.qkv_proj.weight",
+                        f"model.layers.{layer_num}.{attn_type}.qkv_proj.linear.weight",
+                        f"model.layers.{layer_num}.{attn_type}.qkv_proj.layer.weight",
+                        f"transformer.h.{layer_num}.attn.c_attn.weight",
+                        f"layers.{layer_num}.{attn_type}.qkv_proj.weight",
+                    ]
+                    
+                    # Generate all variants for each potential key
+                    all_variants = []
+                    for base_key in potential_keys:
+                        all_variants.extend(self.generate_key_variants(base_key))
 
-                    for qkv_key in qkv_key_variants:
+                    for qkv_key in all_variants:
                         if qkv_key in target_dict:
-                            if combined_tensor.shape == target_dict[qkv_key].shape:
-                                qkv_combinations[qkv_key] = combined_tensor
+                            if combined_weight.shape == target_dict[qkv_key].shape:
+                                qkv_combinations[qkv_key] = combined_weight
                                 break  # Found a match, move to next layer
 
-                # Process biases (if they exist)
+                # Process biases (if they exist in source)
                 if (
                     "q_bias" in qkv_dict
                     and "k_bias" in qkv_dict
                     and "v_bias" in qkv_dict
                 ):
-                    # (Logic for combining biases is similar if needed)
-                    pass
+                    q_bias_key, q_bias_tensor = qkv_dict["q_bias"]
+                    k_bias_key, k_bias_tensor = qkv_dict["k_bias"]
+                    v_bias_key, v_bias_tensor = qkv_dict["v_bias"]
+
+                    combined_bias = torch.cat([q_bias_tensor, k_bias_tensor, v_bias_tensor], dim=0)
+
+                    # Generate potential bias target keys
+                    potential_bias_keys = [
+                        f"model.layers.{layer_num}.{attn_type}.qkv_proj.bias",
+                        f"model.layers.{layer_num}.{attn_type}.qkv_proj.linear.bias",
+                        f"model.layers.{layer_num}.{attn_type}.qkv_proj.layer.bias",
+                        f"transformer.h.{layer_num}.attn.c_attn.bias",
+                        f"layers.{layer_num}.{attn_type}.qkv_proj.bias",
+                    ]
+                    
+                    # Generate all variants for each potential bias key
+                    all_bias_variants = []
+                    for base_key in potential_bias_keys:
+                        all_bias_variants.extend(self.generate_key_variants(base_key))
+
+                    for qkv_bias_key in all_bias_variants:
+                        if qkv_bias_key in target_dict:
+                            if combined_bias.shape == target_dict[qkv_bias_key].shape:
+                                qkv_combinations[qkv_bias_key] = combined_bias
+                                break  # Found a match, move to next layer
 
         return qkv_combinations
 
 
 class PreTrainedModel:
     """
-    A class representing some utility functions for pretrained models.
+    Universal pretrained model class with automatic parameter mapping
+    for multiple LLM architectures including Gemma2, Qwen, and others.
     """
 
     def __init__(self, custom_patterns=None):
-        self.mapper = AutoParameterMapper(custom_patterns)
+        self.mapper = UniversalParameterMapper(custom_patterns)
 
     def from_pretrained(
         self, model_path: str, map_location="cpu", strict=False, verbose=True
@@ -474,7 +521,6 @@ class PreTrainedModel:
             if os.path.isfile(path) and path.endswith(".safetensors"):
                 return [path]
             
-
             if os.path.isdir(path):
                 safetensors_files = [
                     os.path.join(path, f)
@@ -529,19 +575,43 @@ class PreTrainedModel:
 
             # Remove QKV components that were combined
             if qkv_combinations:
-                combined_layers = set()
+                combined_layers = defaultdict(set)
                 for qkv_key in qkv_combinations.keys():
                     layer_match = re.search(r"layers?\.(\d+)\.", qkv_key)
+                    if not layer_match:
+                        layer_match = re.search(r"h\.(\d+)\.", qkv_key)
                     if layer_match:
-                        combined_layers.add(layer_match.group(1))
+                        layer_num = layer_match.group(1)
+                        # Determine attention type from the combined key
+                        if "global_attn" in qkv_key:
+                            attn_type = "global_attn"
+                        elif "self_attn" in qkv_key:
+                            attn_type = "self_attn"
+                        elif "attention" in qkv_key:
+                            attn_type = "attention"
+                        else:
+                            attn_type = "attn"
+                        combined_layers[layer_num].add(attn_type)
 
                 # Filter out individual Q, K, V components for combined layers
                 filtered_source_keys = []
                 for key in source_keys:
                     layer_match = re.search(r"layers?\.(\d+)\.", key)
-                    if layer_match and layer_match.group(1) in combined_layers:
-                        if any(proj in key for proj in ["q_proj", "k_proj", "v_proj"]):
+                    if not layer_match:
+                        layer_match = re.search(r"h\.(\d+)\.", key)
+                    
+                    if layer_match:
+                        layer_num = layer_match.group(1)
+                        # Check if this layer's attention was combined
+                        attn_was_combined = False
+                        for attn_type in combined_layers.get(layer_num, set()):
+                            if attn_type in key and any(proj in key for proj in ["q_proj", "k_proj", "v_proj", "query", "key", "value"]):
+                                attn_was_combined = True
+                                break
+                        
+                        if attn_was_combined:
                             continue  # Skip individual Q, K, V for combined layers
+                    
                     filtered_source_keys.append(key)
                 source_keys = filtered_source_keys
 
@@ -578,15 +648,18 @@ class PreTrainedModel:
                 # Add QKV source keys that were combined
                 for qkv_target_key in qkv_combinations.keys():
                     layer_match = re.search(r"layers?\.(\d+)\.", qkv_target_key)
+                    if not layer_match:
+                        layer_match = re.search(r"h\.(\d+)\.", qkv_target_key)
                     if layer_match:
-                        layer_id = layer_match.group(1)
+                        layer_num = layer_match.group(1)
                         for source_key in source_dict.keys():
                             if (
-                                f"layers.{layer_id}." in source_key
-                                or f"layers.{layer_id}." in source_key
+                                f"layers.{layer_num}." in source_key
+                                or f"layer.{layer_num}." in source_key
+                                or f"h.{layer_num}." in source_key
                             ) and any(
                                 proj in source_key
-                                for proj in ["q_proj", "k_proj", "v_proj"]
+                                for proj in ["q_proj", "k_proj", "v_proj", "query", "key", "value"]
                             ):
                                 mapped_source_keys.add(source_key)
 
@@ -596,8 +669,11 @@ class PreTrainedModel:
             if verbose:
                 print(f"✅ Parameter mapping completed:")
                 print(f"   Successfully mapped: {mapped_count}")
-                print(f"   Success rate: {success_rate:.1f}%")
-                print(f"   Target coverage: {coverage_rate:.1f}%")
+                print(f"   Success rate: {success_rate:.1f}% ({mapped_count}/{total_source})")
+                print(f"   Target coverage: {coverage_rate:.1f}% ({mapped_count}/{total_target})")
+
+                if qkv_combinations:
+                    print(f"   QKV combinations created: {len(qkv_combinations)}")
 
                 if unmapped_source:
                     print(
@@ -617,6 +693,8 @@ class PreTrainedModel:
         # Try safetensors first
         safefiles = _collect_safetensors_files(model_path)
         if safefiles:
+            if verbose:
+                print(f"📁 Loading from {len(safefiles)} safetensors file(s)")
 
             raw_weights = {}
             for f in tqdm(
@@ -629,6 +707,10 @@ class PreTrainedModel:
                     f"Found safetensors files but no tensors were loaded from {model_path!r}"
                 )
 
+            if verbose:
+                print(f"📊 Source parameters: {len(raw_weights)}")
+                print(f"📊 Target parameters: {len(target_state_dict)}")
+
             # Apply smart parameter mapping
             mapped_state_dict, missing_keys, unmapped_keys = _smart_parameter_mapping(
                 raw_weights, target_state_dict
@@ -637,41 +719,55 @@ class PreTrainedModel:
             # Load the mapped state dict
             try:
                 self.load_state_dict(mapped_state_dict, strict=strict)
+                if verbose:
+                    print("✅ Model loaded successfully!")
 
             except Exception as e:
                 if strict:
                     raise RuntimeError(f"Failed to load model state dict: {e}")
                 else:
-                    warnings.warn(f"Some parameters could not be loaded: {e}")
+                    if verbose:
+                        print(f"⚠️  Warning: Some parameters could not be loaded: {e}")
 
             return
 
         # Fallback: PyTorch checkpoint
         if os.path.isfile(model_path):
+            if verbose:
+                print(f"📁 Loading PyTorch checkpoint: {model_path}")
 
             ckpt = torch.load(model_path, map_location=map_location)
             source_dict = (
                 ckpt.get("model_state_dict", ckpt) if isinstance(ckpt, dict) else ckpt
             )
 
+            if verbose:
+                print(f"📊 Source parameters: {len(source_dict)}")
+                print(f"📊 Target parameters: {len(target_state_dict)}")
+
             mapped_state_dict, missing_keys, unmapped_keys = _smart_parameter_mapping(
                 source_dict, target_state_dict
             )
 
             self.load_state_dict(mapped_state_dict, strict=strict)
+            if verbose:
+                print("✅ Model loaded successfully!")
             return
 
         # Fallback: Sharded PyTorch
         idx_path = os.path.join(model_path, "pytorch_model.bin.index.json")
         if os.path.isdir(model_path) and os.path.isfile(idx_path):
+            if verbose:
+                print(f"📁 Loading sharded PyTorch checkpoint from: {model_path}")
+
             with open(idx_path, "r", encoding="utf-8") as f:
                 index = json.load(f)
 
             all_weights = {}
-            for shard in set(index["weight_map"].values()):
+            shards = sorted(set(index["weight_map"].values()))
+            
+            for shard in tqdm(shards, desc="Loading shards", disable=not verbose):
                 shard_path = os.path.join(model_path, shard)
-                if verbose:
-                    print(f"   Loading shard: {shard}")
 
                 part = torch.load(shard_path, map_location=map_location)
                 part_dict = part.get("model_state_dict", part)
@@ -680,11 +776,17 @@ class PreTrainedModel:
                 del part, part_dict
                 gc.collect()
 
+            if verbose:
+                print(f"📊 Source parameters: {len(all_weights)}")
+                print(f"📊 Target parameters: {len(target_state_dict)}")
+
             mapped_state_dict, missing_keys, unmapped_keys = _smart_parameter_mapping(
                 all_weights, target_state_dict
             )
 
             self.load_state_dict(mapped_state_dict, strict=strict)
+            if verbose:
+                print("✅ Model loaded successfully!")
             return
 
         raise FileNotFoundError(f"No checkpoint found at '{model_path}'")
