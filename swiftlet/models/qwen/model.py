@@ -93,10 +93,11 @@ class QwenAttention(nn.Module):
             self.hidden_size,
             (self.num_heads + 2 * self.num_kv_heads) * self.head_dim,
             quant=False,
+            quant_type=None,
             bias=self.use_bias,
         )
         self.o_proj = Linear(
-            self.num_heads * self.head_dim, self.hidden_size, quant=False, bias=False
+            self.num_heads * self.head_dim, self.hidden_size, quant=False, quant_type=None, bias=False
         )
 
         self.attn_dropout = nn.Dropout(p=self.attn_dropout_prob)
@@ -172,9 +173,9 @@ class QwenAttention(nn.Module):
 class QwenMLP(nn.Module):
     def __init__(self, hidden_size: int, hidden_act: str, intermediate_size: int):
         super().__init__()
-        self.gate_proj = Linear(hidden_size, intermediate_size, quant=False, bias=False)
-        self.up_proj = Linear(hidden_size, intermediate_size, quant=False, bias=False)
-        self.down_proj = Linear(intermediate_size, hidden_size, quant=False, bias=False)
+        self.gate_proj = Linear(hidden_size, intermediate_size, quant=False, quant_type=None, bias=False)
+        self.up_proj = Linear(hidden_size, intermediate_size, quant=False, quant_type=None, bias=False)
+        self.down_proj = Linear(intermediate_size, hidden_size, quant=False, quant_type=None, bias=False)
 
         if hidden_act.lower() == "silu":
             self.act_fn = F.silu
