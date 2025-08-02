@@ -262,6 +262,7 @@ class QwenModel(nn.Module):
         kv_write_indices: torch.Tensor,
         kv_caches: List[Tuple[torch.Tensor, torch.Tensor]],
         mask: torch.Tensor,
+        local_mask: torch.Tensor
     ) -> torch.Tensor:
         for i in range(len(self.layers)):
             layer = self.layers[i]
@@ -275,6 +276,7 @@ class QwenModel(nn.Module):
                 kv_write_indices=kv_write_indices,
                 kv_cache=kv_caches[i],
                 mask=mask,
+                local_mask=local_mask
             )
 
         hidden_states = self.norm(hidden_states)
