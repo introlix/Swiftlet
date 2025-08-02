@@ -6,7 +6,7 @@ from typing import Optional, Sequence
 @dataclasses.dataclass
 class QwenConfig:
     vocab_size: int = 151936
-    max_position_embeddings: int = 131072
+    max_position_embeddings: int = 32768
     num_hidden_layers: int = 28
     num_attention_heads: int = 12
     num_key_value_heads: int = 2
@@ -23,7 +23,7 @@ class QwenConfig:
     initializer_range: float = 0.02
     max_window_layers: int = 28
     rope_theta: float = 1000000.0
-    sliding_window_size: int = 131072
+    sliding_window_size: int = 32768
     tie_word_embeddings: bool = True
     dtype: str = "bfloat16"
     use_cache: bool = True

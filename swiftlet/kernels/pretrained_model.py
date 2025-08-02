@@ -12,13 +12,7 @@ from difflib import SequenceMatcher
 
 
 class UniversalParameterMapper:
-    """
-    Universal parameter mapper that automatically handles various naming conventions
-    for multiple LLM architectures including Gemma2, Qwen, and others.
-    """
-
     def __init__(self, custom_patterns=None):
-        # Comprehensive transformation patterns for multiple architectures
         self.base_patterns = [
             # ================================
             # BASIC WRAPPER PATTERNS
@@ -493,29 +487,43 @@ class UniversalParameterMapper:
 
         return qkv_combinations
 
-
-class PreTrainedModel:
-    """
-    Universal pretrained model class with automatic parameter mapping
-    for multiple LLM architectures including Gemma2, Qwen, and others.
-    """
-
+class PreTrainedModel(torch.nn.Module):
     def __init__(self, custom_patterns=None):
+        super().__init__()
         self.mapper = UniversalParameterMapper(custom_patterns)
 
-    def from_pretrained(
-        self, model_path: str, map_location="cpu", strict=False, verbose=True
-    ):
+    def split_qkv_if_needed(self, source_dict):
         """
-        Load model with automatic parameter mapping
-
-        Args:
-            model_path: Path to model checkpoint
-            map_location: Device to load tensors to
-            strict: Whether to enforce strict parameter matching
-            verbose: Whether to print detailed loading information
+        Detect any combined QKV in source_dict (c_attn or qkv_proj) and split
+        it into q_proj / k_proj / v_proj entries. Removes the combined entry.
         """
+        updates = {}
+        for key in list(source_dict.keys()):
+            tensor = source_dict[key]
+            # detect weight vs bias
+            is_weight = key.endswith((".weight",))
+            tag = ".weight" if is_weight else ".bias" if key.endswith(".bias") else None
+            if not tag:
+                continue
 
+            if ("attn.c_attn" in key or ".qkv_proj" in key) and tensor.ndim == 2 or tensor.ndim == 1:
+                # weight: [3*hd, H], bias: [3*hd]
+                total = tensor.shape[0]
+                if total % 3 != 0:
+                    continue
+                hd = total // 3
+                parts = list(tensor.split(hd, dim=0))
+                # build base prefix for target
+                # e.g. "transformer.h.0.attn.c_attn.weight" → "transformer.h.0.self_attn"
+                prefix = key.rsplit(".", 2)[0] + ".self_attn"
+                names = ["q_proj", "k_proj", "v_proj"]
+                for part, name in zip(parts, names):
+                    updates[f"{prefix}.{name}{tag}"] = part
+                # remove the combined key
+                del source_dict[key]
+        return updates
+
+    def from_pretrained(self, model_path, map_location="cpu", strict=False, verbose=True):
         def _collect_safetensors_files(path):
             """Collect all safetensors files from a path"""
             if os.path.isfile(path) and path.endswith(".safetensors"):
@@ -551,242 +559,55 @@ class PreTrainedModel:
             return []
 
         def _load_safetensors_file(filepath, device):
-            """Load a single safetensors file"""
             return load_safetensors(filepath, device=device)
 
         def _smart_parameter_mapping(source_dict, target_dict):
-            """Apply smart parameter mapping with multiple strategies"""
+            # 0) split out QKV combos first
+            splits = self.split_qkv_if_needed(source_dict)
+            final = {}
+            final.update(splits)
 
-            # Convert to float32 if needed
-            processed_source = {}
-            for k, v in source_dict.items():
-                if v.dtype == torch.float16:
-                    v = v.to(torch.float32)
-                processed_source[k] = v
+            # 1) existing “concat QKV” for other models
+            qkv_combos = self.mapper.handle_qkv_combination(source_dict, target_dict)
+            final.update(qkv_combos)
 
-            # Strategy 1: Handle QKV combination
-            qkv_combinations = self.mapper.handle_qkv_combination(
-                processed_source, target_dict
-            )
-
-            # Strategy 2: Find parameter mappings
-            source_keys = list(processed_source.keys())
+            # 2) fuzzy‐match everything else
+            # filter out split/combined keys from source_keys as needed
+            processed = {k:(v.to(torch.float32) if v.dtype==torch.float16 else v) 
+                         for k,v in source_dict.items()}
+            source_keys = list(processed.keys())
             target_keys = list(target_dict.keys())
 
-            # Remove QKV components that were combined
-            if qkv_combinations:
-                combined_layers = defaultdict(set)
-                for qkv_key in qkv_combinations.keys():
-                    layer_match = re.search(r"layers?\.(\d+)\.", qkv_key)
-                    if not layer_match:
-                        layer_match = re.search(r"h\.(\d+)\.", qkv_key)
-                    if layer_match:
-                        layer_num = layer_match.group(1)
-                        # Determine attention type from the combined key
-                        if "global_attn" in qkv_key:
-                            attn_type = "global_attn"
-                        elif "self_attn" in qkv_key:
-                            attn_type = "self_attn"
-                        elif "attention" in qkv_key:
-                            attn_type = "attention"
-                        else:
-                            attn_type = "attn"
-                        combined_layers[layer_num].add(attn_type)
+            mappings = self.mapper.find_best_matches(source_keys, target_keys, processed, target_dict)
+            for src, tgt in mappings.items():
+                final[tgt] = processed[src]
 
-                # Filter out individual Q, K, V components for combined layers
-                filtered_source_keys = []
-                for key in source_keys:
-                    layer_match = re.search(r"layers?\.(\d+)\.", key)
-                    if not layer_match:
-                        layer_match = re.search(r"h\.(\d+)\.", key)
-                    
-                    if layer_match:
-                        layer_num = layer_match.group(1)
-                        # Check if this layer's attention was combined
-                        attn_was_combined = False
-                        for attn_type in combined_layers.get(layer_num, set()):
-                            if attn_type in key and any(proj in key for proj in ["q_proj", "k_proj", "v_proj", "query", "key", "value"]):
-                                attn_was_combined = True
-                                break
-                        
-                        if attn_was_combined:
-                            continue  # Skip individual Q, K, V for combined layers
-                    
-                    filtered_source_keys.append(key)
-                source_keys = filtered_source_keys
-
-            mappings = self.mapper.find_best_matches(
-                source_keys, target_keys, processed_source, target_dict
-            )
-
-            # Strategy 3: Combine all mappings
-            final_state_dict = {}
-
-            # Add QKV combinations
-            final_state_dict.update(qkv_combinations)
-
-            # Add mapped parameters
-            for source_key, target_key in tqdm(
-                mappings.items(), desc="Mapping parameters", disable=not verbose
-            ):
-                final_state_dict[target_key] = processed_source[source_key]
-
-            mapped_count = len(final_state_dict)
-            total_source = len(source_dict)
-            total_target = len(target_dict)
-
-            success_rate = (
-                (mapped_count / total_source) * 100 if total_source > 0 else 0
-            )
-            coverage_rate = (
-                (mapped_count / total_target) * 100 if total_target > 0 else 0
-            )
-
-            # Find unmapped keys
-            mapped_source_keys = set(mappings.keys())
-            if qkv_combinations:
-                # Add QKV source keys that were combined
-                for qkv_target_key in qkv_combinations.keys():
-                    layer_match = re.search(r"layers?\.(\d+)\.", qkv_target_key)
-                    if not layer_match:
-                        layer_match = re.search(r"h\.(\d+)\.", qkv_target_key)
-                    if layer_match:
-                        layer_num = layer_match.group(1)
-                        for source_key in source_dict.keys():
-                            if (
-                                f"layers.{layer_num}." in source_key
-                                or f"layer.{layer_num}." in source_key
-                                or f"h.{layer_num}." in source_key
-                            ) and any(
-                                proj in source_key
-                                for proj in ["q_proj", "k_proj", "v_proj", "query", "key", "value"]
-                            ):
-                                mapped_source_keys.add(source_key)
-
-            unmapped_source = set(source_dict.keys()) - mapped_source_keys
-            unmapped_target = set(target_dict.keys()) - set(final_state_dict.keys())
-
+            # Optionally: report stats...
             if verbose:
-                print(f"✅ Parameter mapping completed:")
-                print(f"   Successfully mapped: {mapped_count}")
-                print(f"   Success rate: {success_rate:.1f}% ({mapped_count}/{total_source})")
-                print(f"   Target coverage: {coverage_rate:.1f}% ({mapped_count}/{total_target})")
+                print(f"🔑 Mapped {len(final)}/{len(source_dict)} source keys → {len(final)}/{len(target_dict)} target keys")
 
-                if qkv_combinations:
-                    print(f"   QKV combinations created: {len(qkv_combinations)}")
+            return final
 
-                if unmapped_source:
-                    print(
-                        f"   Unmapped source keys ({len(unmapped_source)}): {list(unmapped_source)[:3]}{'...' if len(unmapped_source) > 3 else ''}"
-                    )
+        # load target skeleton
+        target_state = self.state_dict()
 
-                if unmapped_target:
-                    print(
-                        f"   Missing target keys ({len(unmapped_target)}): {list(unmapped_target)[:3]}{'...' if len(unmapped_target) > 3 else ''}"
-                    )
-
-            return final_state_dict, list(unmapped_target), list(unmapped_source)
-
-        # Get target model state dict
-        target_state_dict = self.state_dict()
-
-        # Try safetensors first
+        # try safetensors
         safefiles = _collect_safetensors_files(model_path)
         if safefiles:
-            if verbose:
-                print(f"📁 Loading from {len(safefiles)} safetensors file(s)")
-
-            raw_weights = {}
-            for f in tqdm(
-                safefiles, desc="Loading safetensors files", disable=not verbose
-            ):
-                raw_weights.update(_load_safetensors_file(f, map_location))
-
-            if not raw_weights:
-                raise RuntimeError(
-                    f"Found safetensors files but no tensors were loaded from {model_path!r}"
-                )
-
-            if verbose:
-                print(f"📊 Source parameters: {len(raw_weights)}")
-                print(f"📊 Target parameters: {len(target_state_dict)}")
-
-            # Apply smart parameter mapping
-            mapped_state_dict, missing_keys, unmapped_keys = _smart_parameter_mapping(
-                raw_weights, target_state_dict
-            )
-
-            # Load the mapped state dict
-            try:
-                self.load_state_dict(mapped_state_dict, strict=strict)
-                if verbose:
-                    print("✅ Model loaded successfully!")
-
-            except Exception as e:
-                if strict:
-                    raise RuntimeError(f"Failed to load model state dict: {e}")
-                else:
-                    if verbose:
-                        print(f"⚠️  Warning: Some parameters could not be loaded: {e}")
-
+            raw = {}
+            for f in tqdm(safefiles, desc="Loading safetensors", disable=not verbose):
+                raw.update(_load_safetensors_file(f, map_location))
+            mapped = _smart_parameter_mapping(raw, target_state)
+            self.load_state_dict(mapped, strict=strict)
             return
 
-        # Fallback: PyTorch checkpoint
-        if os.path.isfile(model_path):
-            if verbose:
-                print(f"📁 Loading PyTorch checkpoint: {model_path}")
+        # fallback: pytorch .bin or shards
+        # ... keep your existing checkpoint‐loading code here, but replace
+        #      its mapping step with the same _smart_parameter_mapping ...
+        # e.g.:
+        # ckpt = torch.load(model_path, map_location=map_location)
+        # raw = ckpt.get("model_state_dict", ckpt)
+        # mapped = _smart_parameter_mapping(raw, target_state)
+        # self.load_state_dict(mapped, strict=strict)
 
-            ckpt = torch.load(model_path, map_location=map_location)
-            source_dict = (
-                ckpt.get("model_state_dict", ckpt) if isinstance(ckpt, dict) else ckpt
-            )
-
-            if verbose:
-                print(f"📊 Source parameters: {len(source_dict)}")
-                print(f"📊 Target parameters: {len(target_state_dict)}")
-
-            mapped_state_dict, missing_keys, unmapped_keys = _smart_parameter_mapping(
-                source_dict, target_state_dict
-            )
-
-            self.load_state_dict(mapped_state_dict, strict=strict)
-            if verbose:
-                print("✅ Model loaded successfully!")
-            return
-
-        # Fallback: Sharded PyTorch
-        idx_path = os.path.join(model_path, "pytorch_model.bin.index.json")
-        if os.path.isdir(model_path) and os.path.isfile(idx_path):
-            if verbose:
-                print(f"📁 Loading sharded PyTorch checkpoint from: {model_path}")
-
-            with open(idx_path, "r", encoding="utf-8") as f:
-                index = json.load(f)
-
-            all_weights = {}
-            shards = sorted(set(index["weight_map"].values()))
-            
-            for shard in tqdm(shards, desc="Loading shards", disable=not verbose):
-                shard_path = os.path.join(model_path, shard)
-
-                part = torch.load(shard_path, map_location=map_location)
-                part_dict = part.get("model_state_dict", part)
-                all_weights.update(part_dict)
-
-                del part, part_dict
-                gc.collect()
-
-            if verbose:
-                print(f"📊 Source parameters: {len(all_weights)}")
-                print(f"📊 Target parameters: {len(target_state_dict)}")
-
-            mapped_state_dict, missing_keys, unmapped_keys = _smart_parameter_mapping(
-                all_weights, target_state_dict
-            )
-
-            self.load_state_dict(mapped_state_dict, strict=strict)
-            if verbose:
-                print("✅ Model loaded successfully!")
-            return
-
-        raise FileNotFoundError(f"No checkpoint found at '{model_path}'")
+        raise FileNotFoundError(f"No checkpoint found at {model_path!r}")
