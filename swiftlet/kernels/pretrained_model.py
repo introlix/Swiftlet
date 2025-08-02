@@ -389,8 +389,10 @@ class PreTrainedModel:
         if safefiles:
             raw={}
             for f in tqdm(safefiles,desc='Load safetensors',disable=not verbose): raw.update(load_safetensors(f,map_location))
-            mapped=_smart_mapping(raw,target)
-            self.load_state_dict(mapped,strict=strict)
+            mapped_state_dict, missing_keys, unmapped_keys = _smart_mapping(raw, target)
+            print("❗️ Missing TARGET keys:", missing_keys)
+            print("❓ Unexpected SOURCE keys:", unmapped_keys)
+            self.load_state_dict(mapped_state_dict, strict=strict)
             return
         # PyTorch .bin and shards fallback
         bin_path=os.path.join(model_path,'pytorch_model.bin')
