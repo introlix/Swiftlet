@@ -21,7 +21,7 @@ class QwenConfig:
     bos_token_id: int = 151643
     eos_token_id: int = 151643
     initializer_range: float = 0.02
-    max_window_layers: int = 28
+    max_window_layers: int = 21
     rope_theta: float = 1000000.0
     sliding_window_size: int = 32768
     tie_word_embeddings: bool = True
