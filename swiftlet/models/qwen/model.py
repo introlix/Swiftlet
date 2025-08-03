@@ -7,27 +7,26 @@ from swiftlet.kernels.linear import Linear
 from swiftlet.kernels.rope import precompute_freqs_cis, apply_rotary_emb
 from swiftlet.kernels.pretrained_model import PreTrainedModel
 from swiftlet.kernels.text_generation import TextGeneration
-from swiftlet.kernels.rmsnorm import RMSNorm
 from swiftlet.kernels.embedding import Embedding
 
-# class RMSNorm(torch.nn.Module):
-#     def __init__(self, dim: int, eps: float = 1e-6, add_unit_offset: bool = False):
-#         super().__init__()
-#         self.eps = eps
-#         self.add_unit_offset = add_unit_offset
-#         # Standard RMSNorm initialization - always start with ones
-#         self.weight = nn.Parameter(torch.ones(dim))
+class RMSNorm(torch.nn.Module):
+    def __init__(self, dim: int, eps: float = 1e-6, add_unit_offset: bool = False):
+        super().__init__()
+        self.eps = eps
+        self.add_unit_offset = add_unit_offset
+        # Standard RMSNorm initialization - always start with ones
+        self.weight = nn.Parameter(torch.ones(dim))
     
-#     def _norm(self, x):
-#         return x * torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + self.eps)
+    def _norm(self, x):
+        return x * torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + self.eps)
     
-#     def forward(self, x):
-#         output = self._norm(x.float())
-#         if self.add_unit_offset:
-#             output = output * (1 + self.weight.float())
-#         else:
-#             output = output * self.weight.float()
-#         return output.type_as(x)
+    def forward(self, x):
+        output = self._norm(x.float())
+        if self.add_unit_offset:
+            output = output * (1 + self.weight.float())
+        else:
+            output = output * self.weight.float()
+        return output.type_as(x)
 
 # class Embedding(nn.Module):
 #     def __init__(self, num_embeddings: int, embedding_dim: int, quant: bool = False):
