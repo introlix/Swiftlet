@@ -374,7 +374,7 @@ class QwenForCausalLM(nn.Module, PreTrainedModel, TextGeneration):
             dtype=hidden_states.dtype,
             device=hidden_states.device,
         )
-        hidden_states = hidden_states * normalizer
+        # hidden_states = hidden_states * normalizer
 
         hidden_states = self.model(
             hidden_states=hidden_states,
