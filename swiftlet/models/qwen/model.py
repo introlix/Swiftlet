@@ -5,9 +5,30 @@ from typing import Tuple, Mapping, List, Union, Optional
 import swiftlet.models.qwen.config as qwen_config
 from swiftlet.kernels.linear import Linear
 from swiftlet.kernels.rope import precompute_freqs_cis, apply_rotary_emb
-from swiftlet.kernels.rmsnorm import RMSNorm
 from swiftlet.kernels.pretrained_model import PreTrainedModel
 from swiftlet.kernels.text_generation import TextGeneration
+
+class RMSNorm(torch.nn.Module):
+    def __init__(self, dim: int, eps: float = 1e-6, add_unit_offset: bool = True):
+        super().__init__()
+        self.eps = eps
+        self.add_unit_offset = add_unit_offset
+        # ✅ FIXED: Initialize to zeros for add_unit_offset=True, ones for False
+        if add_unit_offset:
+            self.weight = nn.Parameter(torch.zeros(dim))
+        else:
+            self.weight = nn.Parameter(torch.ones(dim))  # Standard RMSNorm
+    
+    def _norm(self, x):
+        return x * torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + self.eps)
+    
+    def forward(self, x):
+        output = self._norm(x.float())
+        if self.add_unit_offset:
+            output = output * (1 + self.weight.float())
+        else:
+            output = output * self.weight.float()
+        return output.type_as(x)
 
 class Embedding(nn.Module):
     def __init__(self, num_embeddings: int, embedding_dim: int, quant: bool = False):
