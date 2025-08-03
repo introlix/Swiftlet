@@ -328,6 +328,8 @@ class QwenForCausalLM(nn.Module, PreTrainedModel, TextGeneration):
         head_dim = config.head_dim
         vocab_size = config.vocab_size
 
+        self.tie_word_embeddings = config.tie_word_embeddings
+
         self.tokenizer = tokenizer
         self.embedder = Embedding(vocab_size, config.hidden_size, quant=False)
         self.model = QwenModel(config)
@@ -336,7 +338,8 @@ class QwenForCausalLM(nn.Module, PreTrainedModel, TextGeneration):
         self.lm_head = nn.Linear(config.hidden_size, vocab_size, bias=False)
         
         # Initialize lm_head with embedder weights (tied embeddings)
-        self.lm_head.weight = self.embedder.weight
+        if self.tie_word_embeddings:
+            self.lm_head.weight = self.embedder.weight
         
         self.sampler = Sampler(vocab_size, config)
 
