@@ -13,7 +13,7 @@ from difflib import SequenceMatcher
 
 class UniversalParameterMapper:
     def __init__(self, custom_patterns=None):
-        # (Paste the full base_patterns list here)
+        # Enhanced base patterns with better Qwen2 support
         self.base_patterns = [
             # ================================
             # BASIC WRAPPER PATTERNS
@@ -24,7 +24,89 @@ class UniversalParameterMapper:
             (r"^", "model."),  # Add model prefix
             
             # ================================
-            # ATTENTION LAYER PATTERNS
+            # EMBEDDING PATTERNS (Enhanced for your structure)
+            # ================================
+            # Token embeddings - Handle your embedder structure
+            (r"^model\.embed_tokens\.weight$", "embedder.weight"),
+            (r"^embedder\.weight$", "model.embed_tokens.weight"),
+            (r"^embed_tokens\.weight$", "embedder.weight"),
+            (r"^word_embeddings\.weight$", "embedder.weight"),
+            (r"^token_embeddings\.weight$", "embedder.weight"),
+            (r"^transformer\.wte\.weight$", "embedder.weight"),
+            (r"^embeddings\.word_embeddings\.weight$", "embedder.weight"),
+            
+            # ================================
+            # ATTENTION LAYER PATTERNS (Enhanced for your .linear structure)
+            # ================================
+            # Your model uses .linear submodules, HF doesn't
+            # Convert FROM HF TO your structure
+            (r"^model\.layers\.(\d+)\.self_attn\.q_proj\.weight$", r"model.layers.\1.self_attn.q_proj.linear.weight"),
+            (r"^model\.layers\.(\d+)\.self_attn\.k_proj\.weight$", r"model.layers.\1.self_attn.k_proj.linear.weight"),
+            (r"^model\.layers\.(\d+)\.self_attn\.v_proj\.weight$", r"model.layers.\1.self_attn.v_proj.linear.weight"),
+            (r"^model\.layers\.(\d+)\.self_attn\.o_proj\.weight$", r"model.layers.\1.self_attn.o_proj.linear.weight"),
+            
+            # Convert FROM your structure TO HF (reverse direction)
+            (r"^model\.layers\.(\d+)\.self_attn\.q_proj\.linear\.weight$", r"model.layers.\1.self_attn.q_proj.weight"),
+            (r"^model\.layers\.(\d+)\.self_attn\.k_proj\.linear\.weight$", r"model.layers.\1.self_attn.k_proj.weight"),
+            (r"^model\.layers\.(\d+)\.self_attn\.v_proj\.linear\.weight$", r"model.layers.\1.self_attn.v_proj.weight"),
+            (r"^model\.layers\.(\d+)\.self_attn\.o_proj\.linear\.weight$", r"model.layers.\1.self_attn.o_proj.weight"),
+            
+            # Handle bias terms similarly
+            (r"^model\.layers\.(\d+)\.self_attn\.q_proj\.bias$", r"model.layers.\1.self_attn.q_proj.linear.bias"),
+            (r"^model\.layers\.(\d+)\.self_attn\.k_proj\.bias$", r"model.layers.\1.self_attn.k_proj.linear.bias"),
+            (r"^model\.layers\.(\d+)\.self_attn\.v_proj\.bias$", r"model.layers.\1.self_attn.v_proj.linear.bias"),
+            (r"^model\.layers\.(\d+)\.self_attn\.o_proj\.bias$", r"model.layers.\1.self_attn.o_proj.linear.bias"),
+            
+            # ================================
+            # MLP PATTERNS (Enhanced for your .linear structure)
+            # ================================
+            # Convert FROM HF TO your structure
+            (r"^model\.layers\.(\d+)\.mlp\.gate_proj\.weight$", r"model.layers.\1.mlp.gate_proj.linear.weight"),
+            (r"^model\.layers\.(\d+)\.mlp\.up_proj\.weight$", r"model.layers.\1.mlp.up_proj.linear.weight"),
+            (r"^model\.layers\.(\d+)\.mlp\.down_proj\.weight$", r"model.layers.\1.mlp.down_proj.linear.weight"),
+            
+            # Convert FROM your structure TO HF
+            (r"^model\.layers\.(\d+)\.mlp\.gate_proj\.linear\.weight$", r"model.layers.\1.mlp.gate_proj.weight"),
+            (r"^model\.layers\.(\d+)\.mlp\.up_proj\.linear\.weight$", r"model.layers.\1.mlp.up_proj.weight"),
+            (r"^model\.layers\.(\d+)\.mlp\.down_proj\.linear\.weight$", r"model.layers.\1.mlp.down_proj.weight"),
+            
+            # Handle MLP bias terms
+            (r"^model\.layers\.(\d+)\.mlp\.gate_proj\.bias$", r"model.layers.\1.mlp.gate_proj.linear.bias"),
+            (r"^model\.layers\.(\d+)\.mlp\.up_proj\.bias$", r"model.layers.\1.mlp.up_proj.linear.bias"),
+            (r"^model\.layers\.(\d+)\.mlp\.down_proj\.bias$", r"model.layers.\1.mlp.down_proj.linear.bias"),
+            
+            # ================================
+            # QKV COMBINATION PATTERNS (Enhanced)
+            # ================================
+            # Handle combined QKV projections for your structure
+            (r"^model\.layers\.(\d+)\.self_attn\.qkv_proj\.weight$", r"model.layers.\1.self_attn.qkv_proj.linear.weight"),
+            (r"^model\.layers\.(\d+)\.self_attn\.qkv_proj\.linear\.weight$", r"model.layers.\1.self_attn.qkv_proj.weight"),
+            (r"^model\.layers\.(\d+)\.self_attn\.qkv_proj\.bias$", r"model.layers.\1.self_attn.qkv_proj.linear.bias"),
+            (r"^model\.layers\.(\d+)\.self_attn\.qkv_proj\.linear\.bias$", r"model.layers.\1.self_attn.qkv_proj.bias"),
+            
+            # ================================
+            # NORMALIZATION PATTERNS
+            # ================================
+            # Layer normalization - these typically don't change for Qwen2
+            (r"^model\.layers\.(\d+)\.input_layernorm\.weight$", r"model.layers.\1.input_layernorm.weight"),
+            (r"^model\.layers\.(\d+)\.post_attention_layernorm\.weight$", r"model.layers.\1.post_attention_layernorm.weight"),
+            
+            # Final/output normalization
+            (r"^model\.norm\.weight$", "model.norm.weight"),
+            (r"^norm\.weight$", "model.norm.weight"),
+            (r"^final_layer_norm\.weight$", "model.norm.weight"),
+            
+            # ================================
+            # QWEN-SPECIFIC ATTENTION PATTERNS
+            # ================================
+            # Qwen attention patterns (c_attn is combined QKV, c_proj is output)
+            (r"(.*)\.attn\.c_attn\.(weight|bias)", r"\1.self_attn.qkv_proj.linear.\2"),
+            (r"(.*)\.attn\.c_proj\.(weight|bias)", r"\1.self_attn.o_proj.linear.\2"),
+            (r"(.*)\.self_attn\.qkv_proj\.linear\.(weight|bias)", r"\1.attn.c_attn.\2"),
+            (r"(.*)\.self_attn\.o_proj\.linear\.(weight|bias)", r"\1.attn.c_proj.\2"),
+            
+            # ================================
+            # ADDITIONAL GENERIC PATTERNS
             # ================================
             # Standard self-attention patterns (bidirectional)
             (r"(.*)\.self_attn\.q_proj\.linear\.(weight|bias)", r"\1.self_attn.q_proj.\2"),
@@ -36,69 +118,6 @@ class UniversalParameterMapper:
             (r"(.*)\.self_attn\.v_proj\.(weight|bias)", r"\1.self_attn.v_proj.linear.\2"),
             (r"(.*)\.self_attn\.o_proj\.(weight|bias)", r"\1.self_attn.o_proj.linear.\2"),
             
-            # Global attention patterns for Gemma2 (bidirectional)
-            (r"(.*)\.global_attn\.q_proj\.linear\.(weight|bias)", r"\1.global_attn.q_proj.\2"),
-            (r"(.*)\.global_attn\.k_proj\.linear\.(weight|bias)", r"\1.global_attn.k_proj.\2"),
-            (r"(.*)\.global_attn\.v_proj\.linear\.(weight|bias)", r"\1.global_attn.v_proj.\2"),
-            (r"(.*)\.global_attn\.o_proj\.linear\.(weight|bias)", r"\1.global_attn.o_proj.\2"),
-            (r"(.*)\.global_attn\.q_proj\.(weight|bias)", r"\1.global_attn.q_proj.linear.\2"),
-            (r"(.*)\.global_attn\.k_proj\.(weight|bias)", r"\1.global_attn.k_proj.linear.\2"),
-            (r"(.*)\.global_attn\.v_proj\.(weight|bias)", r"\1.global_attn.v_proj.linear.\2"),
-            (r"(.*)\.global_attn\.o_proj\.(weight|bias)", r"\1.global_attn.o_proj.linear.\2"),
-            
-            # Quantized layer patterns (using '.layer' submodule)
-            (r"(.*)\.self_attn\.q_proj\.layer\.(weight|bias)", r"\1.self_attn.q_proj.\2"),
-            (r"(.*)\.self_attn\.k_proj\.layer\.(weight|bias)", r"\1.self_attn.k_proj.\2"),
-            (r"(.*)\.self_attn\.v_proj\.layer\.(weight|bias)", r"\1.self_attn.v_proj.\2"),
-            (r"(.*)\.self_attn\.o_proj\.layer\.(weight|bias)", r"\1.self_attn.o_proj.\2"),
-            (r"(.*)\.self_attn\.q_proj\.(weight|bias)", r"\1.self_attn.q_proj.layer.\2"),
-            (r"(.*)\.self_attn\.k_proj\.(weight|bias)", r"\1.self_attn.k_proj.layer.\2"),
-            (r"(.*)\.self_attn\.v_proj\.(weight|bias)", r"\1.self_attn.v_proj.layer.\2"),
-            (r"(.*)\.self_attn\.o_proj\.(weight|bias)", r"\1.self_attn.o_proj.layer.\2"),
-            
-            # Global attention quantized patterns
-            (r"(.*)\.global_attn\.q_proj\.layer\.(weight|bias)", r"\1.global_attn.q_proj.\2"),
-            (r"(.*)\.global_attn\.k_proj\.layer\.(weight|bias)", r"\1.global_attn.k_proj.\2"),
-            (r"(.*)\.global_attn\.v_proj\.layer\.(weight|bias)", r"\1.global_attn.v_proj.\2"),
-            (r"(.*)\.global_attn\.o_proj\.layer\.(weight|bias)", r"\1.global_attn.o_proj.\2"),
-            (r"(.*)\.global_attn\.q_proj\.(weight|bias)", r"\1.global_attn.q_proj.layer.\2"),
-            (r"(.*)\.global_attn\.k_proj\.(weight|bias)", r"\1.global_attn.k_proj.layer.\2"),
-            (r"(.*)\.global_attn\.v_proj\.(weight|bias)", r"\1.global_attn.v_proj.layer.\2"),
-            (r"(.*)\.global_attn\.o_proj\.(weight|bias)", r"\1.global_attn.o_proj.layer.\2"),
-            
-            # ================================
-            # QWEN-SPECIFIC ATTENTION PATTERNS
-            # ================================
-            # Qwen attention patterns (c_attn is combined QKV, c_proj is output)
-            (r"(.*)\.attn\.c_attn\.(weight|bias)", r"\1.self_attn.qkv_proj.\2"),
-            (r"(.*)\.attn\.c_proj\.(weight|bias)", r"\1.self_attn.o_proj.\2"),
-            (r"(.*)\.self_attn\.qkv_proj\.(weight|bias)", r"\1.attn.c_attn.\2"),
-            (r"(.*)\.self_attn\.o_proj\.(weight|bias)", r"\1.attn.c_proj.\2"),
-            
-            # Additional Qwen attention variations
-            (r"(.*)\.attention\.(weight|bias)", r"\1.self_attn.\2"),
-            (r"(.*)\.self_attn\.(weight|bias)", r"\1.attention.\2"),
-            (r"(.*)\.attn\.(weight|bias)", r"\1.self_attn.\2"),
-            (r"(.*)\.self_attn\.(weight|bias)", r"\1.attn.\2"),
-            
-            # ================================
-            # QKV COMBINATION PATTERNS
-            # ================================
-            # Standard QKV patterns (all layer types)
-            (r"(.*)\.qkv_proj\.linear\.(weight|bias)", r"\1.qkv_proj.\2"),
-            (r"(.*)\.qkv_proj\.(weight|bias)", r"\1.qkv_proj.linear.\2"),
-            (r"(.*)\.qkv_proj\.layer\.(weight|bias)", r"\1.qkv_proj.\2"),
-            (r"(.*)\.qkv_proj\.(weight|bias)", r"\1.qkv_proj.layer.\2"),
-            
-            # Global attention QKV patterns
-            (r"(.*)\.global_attn\.qkv_proj\.linear\.(weight|bias)", r"\1.global_attn.qkv_proj.\2"),
-            (r"(.*)\.global_attn\.qkv_proj\.(weight|bias)", r"\1.global_attn.qkv_proj.linear.\2"),
-            (r"(.*)\.global_attn\.qkv_proj\.layer\.(weight|bias)", r"\1.global_attn.qkv_proj.\2"),
-            (r"(.*)\.global_attn\.qkv_proj\.(weight|bias)", r"\1.global_attn.qkv_proj.layer.\2"),
-            
-            # ================================
-            # MLP/FFN PATTERNS
-            # ================================
             # Standard MLP patterns (bidirectional)
             (r"(.*)\.mlp\.gate_proj\.linear\.(weight|bias)", r"\1.mlp.gate_proj.\2"),
             (r"(.*)\.mlp\.up_proj\.linear\.(weight|bias)", r"\1.mlp.up_proj.\2"),
@@ -107,84 +126,19 @@ class UniversalParameterMapper:
             (r"(.*)\.mlp\.up_proj\.(weight|bias)", r"\1.mlp.up_proj.linear.\2"),
             (r"(.*)\.mlp\.down_proj\.(weight|bias)", r"\1.mlp.down_proj.linear.\2"),
             
-            # Quantized MLP patterns
-            (r"(.*)\.mlp\.gate_proj\.layer\.(weight|bias)", r"\1.mlp.gate_proj.\2"),
-            (r"(.*)\.mlp\.up_proj\.layer\.(weight|bias)", r"\1.mlp.up_proj.\2"),
-            (r"(.*)\.mlp\.down_proj\.layer\.(weight|bias)", r"\1.mlp.down_proj.\2"),
-            (r"(.*)\.mlp\.gate_proj\.(weight|bias)", r"\1.mlp.gate_proj.layer.\2"),
-            (r"(.*)\.mlp\.up_proj\.(weight|bias)", r"\1.mlp.up_proj.layer.\2"),
-            (r"(.*)\.mlp\.down_proj\.(weight|bias)", r"\1.mlp.down_proj.layer.\2"),
-            
-            # Qwen MLP patterns (w1=gate, w2=down, w3=up)
-            (r"(.*)\.mlp\.w1\.(weight|bias)", r"\1.mlp.gate_proj.\2"),
-            (r"(.*)\.mlp\.w2\.(weight|bias)", r"\1.mlp.down_proj.\2"),
-            (r"(.*)\.mlp\.w3\.(weight|bias)", r"\1.mlp.up_proj.\2"),
-            (r"(.*)\.mlp\.gate_proj\.(weight|bias)", r"\1.mlp.w1.\2"),
-            (r"(.*)\.mlp\.down_proj\.(weight|bias)", r"\1.mlp.w2.\2"),
-            (r"(.*)\.mlp\.up_proj\.(weight|bias)", r"\1.mlp.w3.\2"),
-            
-            # Alternative MLP naming
-            (r"(.*)\.feed_forward\.w1\.(weight|bias)", r"\1.mlp.gate_proj.\2"),
-            (r"(.*)\.feed_forward\.w2\.(weight|bias)", r"\1.mlp.down_proj.\2"),
-            (r"(.*)\.feed_forward\.w3\.(weight|bias)", r"\1.mlp.up_proj.\2"),
-            
             # ================================
-            # EMBEDDING PATTERNS
+            # OUTPUT HEAD PATTERNS (Enhanced for tied embeddings)
             # ================================
-            # Token embeddings
-            (r"embed_tokens\.weight", "embedder.weight"),
-            (r"embedder\.weight", "embed_tokens.weight"),
-            (r"word_embeddings\.weight", "embedder.weight"),
-            (r"token_embeddings\.weight", "embedder.weight"),
-            (r"transformer\.wte\.weight", "model.embed_tokens.weight"),
-            (r"model\.embed_tokens\.weight", "transformer.wte.weight"),
-            (r"embeddings\.word_embeddings\.weight", "model.embed_tokens.weight"),
+            # Language model head - Handle tied embeddings for Qwen2
+            (r"^lm_head\.weight$", "lm_head.weight"),
+            (r"^model\.lm_head\.weight$", "lm_head.weight"),
+            (r"^output\.weight$", "lm_head.weight"),
+            (r"^classifier\.weight$", "lm_head.weight"),
             
-            # Position embeddings
-            (r"embeddings\.position_embeddings\.weight", "model.embed_positions.weight"),
-            (r"transformer\.wpe\.weight", "model.embed_positions.weight"),
-            
-            # ================================
-            # FREQUENCY/ROTARY EMBEDDING PATTERNS
-            # ================================
-            # Frequency embeddings for Gemma2/RoPE
-            (r"^freqs_cis$", "model.freqs_cis"),
-            (r"^model\.freqs_cis$", "freqs_cis"),
-            (r"^rope\.freqs_cis$", "freqs_cis"),
-            (r"^freqs_cis$", "rope.freqs_cis"),
-            (r"^rotary_emb\.inv_freq$", "freqs_cis"),
-            (r"^freqs_cis$", "rotary_emb.inv_freq"),
-            (r"^embed_positions\.inv_freq$", "freqs_cis"),
-            
-            # ================================
-            # NORMALIZATION PATTERNS
-            # ================================
-            # Query/Key normalization
-            (r"(.*)\.query_norm\.weight", r"\1.q_norm.weight"),
-            (r"(.*)\.key_norm\.weight", r"\1.k_norm.weight"),
-            (r"(.*)\.q_norm\.weight", r"\1.query_norm.weight"),
-            (r"(.*)\.k_norm\.weight", r"\1.key_norm.weight"),
-            
-            # Layer normalization variations
-            (r"(.*)\.input_layernorm\.weight", r"\1.input_layer_norm.weight"),
-            (r"(.*)\.input_layer_norm\.weight", r"\1.input_layernorm.weight"),
-            (r"(.*)\.post_attention_layernorm\.weight", r"\1.post_attn_norm.weight"),
-            (r"(.*)\.post_attn_norm\.weight", r"\1.post_attention_layernorm.weight"),
-            (r"(.*)\.layer_norm\.weight", r"\1.layernorm.weight"),
-            (r"(.*)\.layernorm\.weight", r"\1.layer_norm.weight"),
-            
-            # Qwen-specific normalization
-            (r"(.*)\.ln_1\.weight", r"\1.input_layernorm.weight"),
-            (r"(.*)\.ln_2\.weight", r"\1.post_attention_layernorm.weight"),
-            (r"(.*)\.input_layernorm\.weight", r"\1.ln_1.weight"),
-            (r"(.*)\.post_attention_layernorm\.weight", r"\1.ln_2.weight"),
-            
-            # Final/output normalization
-            (r"^norm\.weight", "model.norm.weight"),
-            (r"^model\.norm\.weight", "norm.weight"),
-            (r"final_layer_norm\.weight", "norm.weight"),
-            (r"transformer\.ln_f\.weight", "model.norm.weight"),
-            (r"model\.norm\.weight", "transformer.ln_f.weight"),
+            # Handle tied embeddings (embeddings used as lm_head)
+            (r"^model\.embed_tokens\.weight$", "lm_head.weight"),
+            (r"^embedder\.weight$", "lm_head.weight"),
+            (r"^embed_tokens\.weight$", "lm_head.weight"),
             
             # ================================
             # LAYER INDEXING PATTERNS
@@ -197,31 +151,8 @@ class UniversalParameterMapper:
             (r"model\.layers\.(\d+)\.", r"transformer.h.\1."),
             (r"blocks\.(\d+)\.", r"layers.\1."),
             (r"decoder\.layers\.(\d+)\.", r"model.layers.\1."),
-            
-            # ================================
-            # OUTPUT HEAD PATTERNS
-            # ================================
-            # Language model head
-            (r"lm_head\.weight", "model.lm_head.weight"),
-            (r"model\.lm_head\.weight", "lm_head.weight"),
-            (r"output\.weight", "lm_head.weight"),
-            (r"classifier\.weight", "lm_head.weight"),
-            
-            # ================================
-            # ARCHITECTURE-SPECIFIC PATTERNS
-            # ================================
-            # Handle different attention naming conventions
-            (r"(.*)\.attention\.", r"\1.self_attn."),
-            (r"(.*)\.self_attn\.", r"\1.attention."),
-            (r"(.*)\.attn\.", r"\1.self_attn."),
-            (r"(.*)\.self_attn\.", r"\1.attn."),
-            
-            # Handle different MLP naming conventions
-            (r"(.*)\.feed_forward\.", r"\1.mlp."),
-            (r"(.*)\.mlp\.", r"\1.feed_forward."),
-            (r"(.*)\.ffn\.", r"\1.mlp."),
-            (r"(.*)\.mlp\.", r"\1.ffn."),
         ]
+        
         self.patterns = self.base_patterns.copy()
         if custom_patterns:
             self.patterns.extend(custom_patterns)
@@ -294,11 +225,14 @@ class UniversalParameterMapper:
     def handle_qkv_combination(
         self, source_dict: Dict, target_dict: Dict
     ) -> Dict[str, torch.Tensor]:
+        """Enhanced QKV combination handling for your specific structure"""
         combos = {}
         groups = defaultdict(dict)
-        for k,t in source_dict.items():
+        
+        # Collect Q, K, V projections from source
+        for k, t in source_dict.items():
             if any(at in k for at in ['self_attn','global_attn','attn','attention']) and any(pj in k for pj in ['q_proj','k_proj','v_proj','query','key','value']):
-                m = re.search(r"(?:layers|h)\.(\d+)\.",k)
+                m = re.search(r"(?:layers|h)\.(\d+)\.", k)
                 if not m: continue
                 ln = m.group(1)
                 att = 'global_attn' if 'global_attn' in k else ('self_attn' if 'self_attn' in k else ('attention' if 'attention' in k else 'attn'))
@@ -311,93 +245,178 @@ class UniversalParameterMapper:
                     if any(x in k for x in ['q_proj','query']): groups[lid]['q_bias']=(k,t)
                     if any(x in k for x in ['k_proj','key']):   groups[lid]['k_bias']=(k,t)
                     if any(x in k for x in ['v_proj','value']): groups[lid]['v_bias']=(k,t)
+        
+        # Check if target has combined QKV projections
         if any('qkv_proj' in k or 'c_attn' in k for k in target_dict):
-            for lid,qd in groups.items():
-                ln,att = lid.split('.')
-                # weights
+            for lid, qd in groups.items():
+                ln, att = lid.split('.')
+                
+                # Combine weights (Q, K, V order)
                 if 'q_weight' in qd and 'k_weight' in qd and 'v_weight' in qd:
-                    qk,vk,nk=(qd['q_weight'][1],qd['k_weight'][1],qd['v_weight'][1])
-                    cat = torch.cat([qk,nk,vk],dim=0)
-                    cand = [
+                    qk, kk, vk = (qd['q_weight'][1], qd['k_weight'][1], qd['v_weight'][1])
+                    cat = torch.cat([qk, kk, vk], dim=0)
+                    
+                    # Try various candidate keys for your structure
+                    candidates = [
+                        f"model.layers.{ln}.{att}.qkv_proj.linear.weight",
                         f"model.layers.{ln}.{att}.qkv_proj.weight",
+                        f"model.layers.{ln}.attn.c_attn.weight",
                         f"transformer.h.{ln}.attn.c_attn.weight",
                     ]
-                    for c in cand:
+                    
+                    for c in candidates:
                         for var in self.generate_key_variants(c):
-                            if var in target_dict and target_dict[var].shape==cat.shape:
-                                combos[var]=cat
+                            if var in target_dict and target_dict[var].shape == cat.shape:
+                                combos[var] = cat
                                 break
-                # biases similar...
+                
+                # Combine biases similarly
                 if 'q_bias' in qd and 'k_bias' in qd and 'v_bias' in qd:
-                    qb,kb,vb=(qd['q_bias'][1],qd['k_bias'][1],qd['v_bias'][1])
-                    cat = torch.cat([qb,kb,vb],dim=0)
-                    cand = [
+                    qb, kb, vb = (qd['q_bias'][1], qd['k_bias'][1], qd['v_bias'][1])
+                    cat = torch.cat([qb, kb, vb], dim=0)
+                    
+                    candidates = [
+                        f"model.layers.{ln}.{att}.qkv_proj.linear.bias",
                         f"model.layers.{ln}.{att}.qkv_proj.bias",
+                        f"model.layers.{ln}.attn.c_attn.bias",
                         f"transformer.h.{ln}.attn.c_attn.bias",
                     ]
-                    for c in cand:
+                    
+                    for c in candidates:
                         for var in self.generate_key_variants(c):
-                            if var in target_dict and target_dict[var].shape==cat.shape:
-                                combos[var]=cat
+                            if var in target_dict and target_dict[var].shape == cat.shape:
+                                combos[var] = cat
                                 break
+        
         return combos
 
 
 class PreTrainedModel:
     def __init__(self, custom_patterns=None):
-
         self.mapper = UniversalParameterMapper(custom_patterns)
 
     def split_qkv_if_needed(self, source_dict):
+        """Split combined QKV projections if your model expects separate Q, K, V"""
         updates = {}
         for k in list(source_dict):
             t = source_dict[k]
             tag = '.weight' if k.endswith('.weight') else ('.bias' if k.endswith('.bias') else None)
             if tag and (('attn.c_attn' in k or '.qkv_proj' in k) and t.ndim in (1,2)):
                 n = t.shape[0]
-                if n%3: continue
-                h = n//3
-                parts = list(t.split(h,dim=0))
-                pref = k.rsplit('.',2)[0]+'.self_attn'
-                for p,name in zip(parts,['q_proj','k_proj','v_proj']): updates[f"{pref}.{name}{tag}"]=p
+                if n % 3: continue
+                h = n // 3
+                parts = list(t.split(h, dim=0))
+                
+                # Determine the base prefix for separate projections
+                if 'attn.c_attn' in k:
+                    base_prefix = k.replace('attn.c_attn', 'self_attn')
+                elif '.qkv_proj' in k:
+                    base_prefix = k.replace('.qkv_proj', '.self_attn')
+                else:
+                    continue
+                
+                base_prefix = base_prefix.rsplit('.', 1)[0]
+                
+                # Add .linear if your structure requires it
+                for p, name in zip(parts, ['q_proj', 'k_proj', 'v_proj']):
+                    # Try with .linear first (for your structure)
+                    key_with_linear = f"{base_prefix}.{name}.linear{tag}"
+                    key_without_linear = f"{base_prefix}.{name}{tag}"
+                    updates[key_with_linear] = p
+                    updates[key_without_linear] = p
+                
                 del source_dict[k]
+        
         return updates
 
     def from_pretrained(self, model_path, map_location='cpu', strict=False, verbose=True):
         def _collect_safetensors_files(path):
-            if os.path.isfile(path) and path.endswith('.safetensors'): return [path]
+            if os.path.isfile(path) and path.endswith('.safetensors'): 
+                return [path]
             if os.path.isdir(path):
-                idx=os.path.join(path,'model.safetensors.index.json')
+                idx = os.path.join(path, 'model.safetensors.index.json')
                 if os.path.isfile(idx):
-                    idxd=json.load(open(idx,'r'))
-                    return sorted(set(os.path.join(path,v) for v in idxd['weight_map'].values()))
-                return sorted(os.path.join(path,f) for f in os.listdir(path) if f.endswith('.safetensors'))
+                    idxd = json.load(open(idx, 'r'))
+                    return sorted(set(os.path.join(path, v) for v in idxd['weight_map'].values()))
+                return sorted(os.path.join(path, f) for f in os.listdir(path) if f.endswith('.safetensors'))
             return []
+        
         def _smart_mapping(src, tgt):
-            splits=self.split_qkv_if_needed(src)
+            if verbose:
+                print(f"Source keys: {len(src)}, Target keys: {len(tgt)}")
+                print("Sample source keys:", list(src.keys())[:5])
+                print("Sample target keys:", list(tgt.keys())[:5])
+            
+            # Handle tied embeddings for lm_head
+            if 'lm_head.weight' in tgt and 'lm_head.weight' not in src:
+                if 'model.embed_tokens.weight' in src:
+                    # Copy embedding weights to lm_head (your model has separate lm_head, HF uses tied)
+                    src['lm_head.weight'] = src['model.embed_tokens.weight'].clone()
+                    if verbose:
+                        print("Copying tied embeddings: model.embed_tokens.weight → lm_head.weight")
+                elif 'embedder.weight' in src:
+                    src['lm_head.weight'] = src['embedder.weight'].clone()
+                    if verbose:
+                        print("Copying tied embeddings: embedder.weight → lm_head.weight")
+            
+            # Handle QKV splitting first
+            splits = self.split_qkv_if_needed(src)
             final = {**splits}
-            combos=self.mapper.handle_qkv_combination(src,tgt)
+            
+            # Handle QKV combination (in case source has separate Q,K,V but target wants combined)
+            combos = self.mapper.handle_qkv_combination(src, tgt)
             final.update(combos)
-            proc={k:(v.to(torch.float32) if v.dtype==torch.float16 else v) for k,v in src.items()}
-            maps=self.mapper.find_best_matches(list(proc),list(tgt),proc,tgt)
-            for s,t in maps.items(): final[t]=proc[s]
-            if verbose: print(f"Mapped {len(final)}/{len(src)} → {len(final)}/{len(tgt)}")
+            
+            # Convert to float32 if needed
+            proc = {k: (v.to(torch.float32) if v.dtype == torch.float16 else v) for k, v in src.items()}
+            
+            # Find parameter mappings
+            maps = self.mapper.find_best_matches(list(proc), list(tgt), proc, tgt)
+            for s, t in maps.items(): 
+                final[t] = proc[s]
+            
+            if verbose: 
+                print(f"Mapped {len(final)}/{len(src)} source → {len(final)}/{len(tgt)} target")
+                missing_in_target = set(tgt.keys()) - set(final.keys())
+                if missing_in_target:
+                    print(f"Missing in target: {sorted(list(missing_in_target))[:10]}...")
+                unused_from_source = set(src.keys()) - {k for k in src.keys() if any(final.get(tk) is src[k] for tk in final.keys())}
+                if unused_from_source:
+                    print(f"Unused from source: {sorted(list(unused_from_source))[:10]}...")
+            
             return final
 
+        # Get target state dict from your model
         target = self.state_dict()
+        
+        # Try safetensors first
         safefiles = _collect_safetensors_files(model_path)
         if safefiles:
-            raw={}
-            for f in tqdm(safefiles,desc='Load safetensors',disable=not verbose): raw.update(load_safetensors(f,map_location))
-            mapped=_smart_mapping(raw,target)
-            self.load_state_dict(mapped,strict=strict)
-            return
-        # PyTorch .bin and shards fallback
-        bin_path=os.path.join(model_path,'pytorch_model.bin')
+            raw = {}
+            for f in tqdm(safefiles, desc='Loading safetensors', disable=not verbose): 
+                raw.update(load_safetensors(f, map_location))
+            mapped = _smart_mapping(raw, target)
+            self.load_state_dict(mapped, strict=strict)
+            return self
+        
+        # Fallback to PyTorch .bin files
+        bin_path = os.path.join(model_path, 'pytorch_model.bin')
         if os.path.isfile(bin_path):
-            ckpt=torch.load(bin_path,map_location)
-            src=ckpt.get('model_state_dict',ckpt)
-            mapped=_smart_mapping(src,target)
-            self.load_state_dict(mapped,strict=strict)
-            return
-        raise FileNotFoundError(f"No checkpoint at {model_path}")
+            ckpt = torch.load(bin_path, map_location)
+            src = ckpt.get('model_state_dict', ckpt)
+            mapped = _smart_mapping(src, target)
+            self.load_state_dict(mapped, strict=strict)
+            return self
+        
+        # Try sharded PyTorch files
+        shard_files = [f for f in os.listdir(model_path) if f.startswith('pytorch_model-') and f.endswith('.bin')]
+        if shard_files:
+            raw = {}
+            for f in tqdm(sorted(shard_files), desc='Loading PyTorch shards', disable=not verbose):
+                ckpt = torch.load(os.path.join(model_path, f), map_location)
+                raw.update(ckpt.get('model_state_dict', ckpt))
+            mapped = _smart_mapping(raw, target)
+            self.load_state_dict(mapped, strict=strict)
+            return self
+        
+        raise FileNotFoundError(f"No checkpoint found at {model_path}")
