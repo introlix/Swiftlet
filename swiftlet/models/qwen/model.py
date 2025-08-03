@@ -318,10 +318,9 @@ class QwenForCausalLM(nn.Module, PreTrainedModel, TextGeneration):
         self,
         tokenizer,
         config: qwen_config.QwenConfig,
-        custom_patterns=None,
     ):
         super().__init__()
-        PreTrainedModel.__init__(self, custom_patterns)
+        PreTrainedModel.__init__(self)
 
         self.config = config
         assert config.hidden_size % config.num_attention_heads == 0
