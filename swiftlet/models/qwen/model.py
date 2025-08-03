@@ -5,7 +5,7 @@ from typing import Tuple, Mapping, List, Union, Optional
 import swiftlet.models.qwen.config as qwen_config
 from swiftlet.kernels.linear import Linear
 from swiftlet.kernels.rope import precompute_freqs_cis, apply_rotary_emb
-from swiftlet.kernels.pretrained_model import PreTrainedModel
+from swiftlet.models.qwen.pretrained_model_qwen import PreTrainedModel
 from swiftlet.kernels.text_generation import TextGeneration
 from swiftlet.kernels.embedding import Embedding
 
