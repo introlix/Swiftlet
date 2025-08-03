@@ -6,9 +6,34 @@ import swiftlet.models.qwen.config as qwen_config
 from swiftlet.kernels.linear import Linear
 from swiftlet.kernels.rope import precompute_freqs_cis, apply_rotary_emb
 from swiftlet.kernels.rmsnorm import RMSNorm
-from swiftlet.kernels.embedding import Embedding
 from swiftlet.kernels.pretrained_model import PreTrainedModel
 from swiftlet.kernels.text_generation import TextGeneration
+
+class Embedding(nn.Module):
+    def __init__(self, num_embeddings: int, embedding_dim: int, quant: bool = False):
+        super().__init__()
+        # Quantization path (if needed) can be re-enabled and adjusted here
+        # if quant:
+        #     self.weight = nn.Parameter(
+        #         torch.empty((num_embeddings, embedding_dim), dtype=torch.int8),
+        #         requires_grad=False,
+        #     )
+        #     self.weight_scaler = nn.Parameter(torch.Tensor(num_embeddings))
+        # else:
+        # Create a trainable embedding weight
+        self.weight = nn.Parameter(
+            torch.empty((num_embeddings, embedding_dim)),
+            requires_grad=True,  # allow gradients for training/fine-tuning
+        )
+        # Optionally keep track of quant flag
+        self.quant = quant
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # If quantization is enabled, scale the int8 weights here
+        weight = self.weight
+        # if self.quant:
+        #     weight = weight * self.weight_scaler.unsqueeze(-1)
+        return F.embedding(x, weight)
 
 
 class Sampler(nn.Module):
