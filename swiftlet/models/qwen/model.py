@@ -9,15 +9,12 @@ from swiftlet.kernels.pretrained_model import PreTrainedModel
 from swiftlet.kernels.text_generation import TextGeneration
 
 class RMSNorm(torch.nn.Module):
-    def __init__(self, dim: int, eps: float = 1e-6, add_unit_offset: bool = True):
+    def __init__(self, dim: int, eps: float = 1e-6, add_unit_offset: bool = False):
         super().__init__()
         self.eps = eps
         self.add_unit_offset = add_unit_offset
-        # ✅ FIXED: Initialize to zeros for add_unit_offset=True, ones for False
-        if add_unit_offset:
-            self.weight = nn.Parameter(torch.zeros(dim))
-        else:
-            self.weight = nn.Parameter(torch.ones(dim))  # Standard RMSNorm
+        # Standard RMSNorm initialization - always start with ones
+        self.weight = nn.Parameter(torch.ones(dim))
     
     def _norm(self, x):
         return x * torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + self.eps)
@@ -33,32 +30,17 @@ class RMSNorm(torch.nn.Module):
 class Embedding(nn.Module):
     def __init__(self, num_embeddings: int, embedding_dim: int, quant: bool = False):
         super().__init__()
-        # Quantization path (if needed) can be re-enabled and adjusted here
-        # if quant:
-        #     self.weight = nn.Parameter(
-        #         torch.empty((num_embeddings, embedding_dim), dtype=torch.int8),
-        #         requires_grad=False,
-        #     )
-        #     self.weight_scaler = nn.Parameter(torch.Tensor(num_embeddings))
-        # else:
-        # Create a trainable embedding weight
         self.weight = nn.Parameter(
             torch.empty((num_embeddings, embedding_dim)),
-            requires_grad=True,  # allow gradients for training/fine-tuning
+            requires_grad=True,
         )
-        # Optionally keep track of quant flag
         self.quant = quant
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # If quantization is enabled, scale the int8 weights here
-        weight = self.weight
-        # if self.quant:
-        #     weight = weight * self.weight_scaler.unsqueeze(-1)
-        return F.embedding(x, weight)
+        return F.embedding(x, self.weight)
 
 
 class Sampler(nn.Module):
-
     def __init__(self, vocab_size: int, config: qwen_config.QwenConfig):
         super().__init__()
         self.vocab_size = vocab_size
@@ -67,20 +49,20 @@ class Sampler(nn.Module):
     @torch.no_grad()
     def forward(
         self,
-        embedding: torch.Tensor,
+        lm_head_weight: torch.Tensor,  # Changed from embedding to lm_head_weight
         hidden_states: torch.Tensor,
         output_positions: torch.Tensor,
         temperatures: Union[torch.Tensor, None],
         top_ps: torch.Tensor,
         top_ks: torch.Tensor,
-        embedding_bias: Optional[torch.Tensor] = None,
+        lm_head_bias: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         # Select the last element for each sequence.
         # (batch_size, input_len, hidden_size) -> (batch_size, hidden_size)
         hidden_states = hidden_states.index_select(1, output_positions).squeeze(dim=1)
-        logits = torch.matmul(hidden_states, embedding.t())
-        if embedding_bias is not None:
-            logits += embedding_bias
+        logits = torch.matmul(hidden_states, lm_head_weight.t())
+        if lm_head_bias is not None:
+            logits += lm_head_bias
 
         if temperatures is None:
             return torch.argmax(logits, dim=-1).squeeze(dim=-1), logits
@@ -199,7 +181,6 @@ class QwenAttention(nn.Module):
             and self.attn_type == "LOCAL"
             and local_mask is not None
             and self.use_sliding_window
-            and local_mask is not None
         ):
             mask = local_mask
 
@@ -350,6 +331,13 @@ class QwenForCausalLM(nn.Module, PreTrainedModel, TextGeneration):
         self.tokenizer = tokenizer
         self.embedder = Embedding(vocab_size, config.hidden_size, quant=False)
         self.model = QwenModel(config)
+        
+        # Add the lm_head layer for tied embeddings
+        self.lm_head = nn.Linear(config.hidden_size, vocab_size, bias=False)
+        
+        # Initialize lm_head with embedder weights (tied embeddings)
+        self.lm_head.weight = self.embedder.weight
+        
         self.sampler = Sampler(vocab_size, config)
 
         self._register_freqs_cis("freqs_cis", head_dim, max_seq_len)
@@ -390,11 +378,13 @@ class QwenForCausalLM(nn.Module, PreTrainedModel, TextGeneration):
         hidden_states = self.embedder(
             input_token_ids
         )  # [batch_size, input_len, hidden_size]
-        normalizer = torch.tensor(
-            self.config.hidden_size**0.5,
-            dtype=hidden_states.dtype,
-            device=hidden_states.device,
-        )
+        
+        # Remove the normalizer - this was likely causing issues
+        # normalizer = torch.tensor(
+        #     self.config.hidden_size**0.5,
+        #     dtype=hidden_states.dtype,
+        #     device=hidden_states.device,
+        # )
         # hidden_states = hidden_states * normalizer
 
         hidden_states = self.model(
@@ -405,10 +395,12 @@ class QwenForCausalLM(nn.Module, PreTrainedModel, TextGeneration):
             mask=mask,
             local_mask=local_mask,
         )
-        embedder_weight = self.embedder.weight
+
+        # Use lm_head weight instead of embedder weight
+        lm_head_weight = self.lm_head.weight
 
         next_tokens, logits = self.sampler(
-            embedding=embedder_weight,
+            lm_head_weight=lm_head_weight,  # Changed parameter name
             hidden_states=hidden_states,
             output_positions=output_positions,
             temperatures=temperatures,
