@@ -24,6 +24,7 @@ It is designed for **learning**, **experimentation**, and **local execution** of
 | Gemma 1   | ✅ Working            | Text-only                     |
 | Gemma 2   | ✅ Working            | Text-only                     |
 | Gemma 3   | ✅ Partially Working  | Vision support not implemented |
+| Qwen 2   | ✅ Working  | Text-only (MoE support not implemented) |
 
 > ℹ️ More models will be added soon!
 
