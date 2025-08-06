@@ -28,18 +28,6 @@ class RMSNorm(torch.nn.Module):
             output = output * self.weight.float()
         return output.type_as(x)
 
-# class Embedding(nn.Module):
-#     def __init__(self, num_embeddings: int, embedding_dim: int, quant: bool = False):
-#         super().__init__()
-#         self.weight = nn.Parameter(
-#             torch.empty((num_embeddings, embedding_dim)),
-#             requires_grad=True,
-#         )
-#         self.quant = quant
-
-#     def forward(self, x: torch.Tensor) -> torch.Tensor:
-#         return F.embedding(x, self.weight)
-
 
 class Sampler(nn.Module):
     def __init__(self, vocab_size: int, config: qwen_config.QwenConfig):
@@ -115,18 +103,21 @@ class QwenAttention(nn.Module):
         self.kv_size = self.num_kv_heads * self.head_dim
 
         self.use_bias = config.use_bias
+        self.quant = config.quant
+        self.quant_type = config.quant_type
+
         self.scaling = self.head_dim**-0.5
         self.attn_dropout_prob = config.attention_dropout
 
         self.qkv_proj = Linear(
             self.hidden_size,
             (self.num_heads + 2 * self.num_kv_heads) * self.head_dim,
-            quant=False,
-            quant_type=None,
+            quant=self.quant,
+            quant_type=self.quant_type,
             bias=self.use_bias,
         )
         self.o_proj = Linear(
-            self.num_heads * self.head_dim, self.hidden_size, quant=False, quant_type=None, bias=False
+            self.num_heads * self.head_dim, self.hidden_size, quant=self.quant, quant_type=self.quant_type, bias=False
         )
 
         self.attn_dropout = nn.Dropout(p=self.attn_dropout_prob)
@@ -199,11 +190,11 @@ class QwenAttention(nn.Module):
 
 
 class QwenMLP(nn.Module):
-    def __init__(self, hidden_size: int, hidden_act: str, intermediate_size: int):
+    def __init__(self, hidden_size: int, hidden_act: str, intermediate_size: int, quant: bool = False, quant_type: str = ''):
         super().__init__()
-        self.gate_proj = Linear(hidden_size, intermediate_size, quant=False, quant_type=None, bias=False)
-        self.up_proj = Linear(hidden_size, intermediate_size, quant=False, quant_type=None, bias=False)
-        self.down_proj = Linear(intermediate_size, hidden_size, quant=False, quant_type=None, bias=False)
+        self.gate_proj = Linear(hidden_size, intermediate_size, quant, quant_type, bias=False)
+        self.up_proj = Linear(hidden_size, intermediate_size, quant, quant_type, bias=False)
+        self.down_proj = Linear(intermediate_size, hidden_size, quant, quant_type, bias=False)
 
         if hidden_act.lower() == "silu":
             self.act_fn = F.silu
@@ -234,6 +225,8 @@ class QwenBlock(nn.Module):
             hidden_size=config.hidden_size,
             hidden_act=config.hidden_act,
             intermediate_size=config.intermediate_size,
+            quant=config.quant,
+            quant_type=config.quant_type,
         )
 
         self.input_layernorm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
@@ -331,17 +324,20 @@ class QwenForCausalLM(nn.Module, PreTrainedModel, TextGeneration):
         self.tie_word_embeddings = config.tie_word_embeddings
 
         self.tokenizer = tokenizer
-        self.embedder = Embedding(vocab_size, config.hidden_size, quant=False)
+        self.embedder = Embedding(vocab_size, config.hidden_size, quant=config.quant)
         self.model = QwenModel(config)
         
         # Add the lm_head layer for tied embeddings
-        self.lm_head = nn.Linear(config.hidden_size, vocab_size, bias=False)
+        self.lm_head = Linear(config.hidden_size, vocab_size, bias=config.quant, quant_type=config.quant_type)
         
         # Initialize lm_head with embedder weights (tied embeddings)
         if self.tie_word_embeddings:
             self.lm_head.weight = self.embedder.weight
         
         self.sampler = Sampler(vocab_size, config)
+
+        self.quant = config.quant
+        self.qaunt_type = config.quant_type
 
         self._register_freqs_cis("freqs_cis", head_dim, max_seq_len)
 
