@@ -5,3 +5,4 @@ pillow==11.2.1
 safetensors==0.5.3
 bitsandbytes==0.46.0
 tqdm==4.67.1
+psutil

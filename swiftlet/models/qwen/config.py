@@ -26,6 +26,8 @@ class QwenConfig:
     sliding_window_size: int = 32768
     tie_word_embeddings: bool = True
     dtype: str = "bfloat16"
+    quant: bool = False
+    quant_type: str = '' # The type of quantization used, e.g., 'int8', 'int4'.
     use_cache: bool = True
     use_sliding_window: bool = False
 
