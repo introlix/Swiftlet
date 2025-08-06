@@ -1,4 +1,5 @@
 import os
+import psutil
 import json
 import torch
 import gc
@@ -112,7 +113,7 @@ class PreTrainedModel:
             raise
 
     def from_pretrained(self, model_path, map_location='cpu', strict=False, verbose=True, 
-                       max_memory_gb=None, device_map=None):
+                       max_memory_gb=None, device_map=None, low_cpu_mem_usage=True):
         """Load HF model with memory-efficient conversion"""
         
         # Force CPU loading for large models if not specified
@@ -136,6 +137,18 @@ class PreTrainedModel:
             return []
         
         with self._memory_efficient_loading():
+            # Memory monitoring
+            def log_memory(stage=""):
+                if verbose:
+                    mem = psutil.virtual_memory()
+                    print(f"Memory usage {stage}: {mem.percent:.1f}% ({mem.used/1024**3:.1f}GB/{mem.total/1024**3:.1f}GB)")
+                    if torch.cuda.is_available():
+                        gpu_mem = torch.cuda.memory_allocated() / 1024**3
+                        gpu_max = torch.cuda.max_memory_allocated() / 1024**3
+                        print(f"GPU memory: {gpu_mem:.1f}GB (max: {gpu_max:.1f}GB)")
+            
+            log_memory("before loading")
+            
             # Get your model's target state dict
             target_state = self.state_dict()
             
@@ -147,32 +160,68 @@ class PreTrainedModel:
                 
                 hf_state = {}
                 
-                # Load files one by one for large models to avoid memory spikes
-                for i, file_path in enumerate(tqdm(safetensor_files, desc='Loading', disable=not verbose)):
-                    try:
-                        file_state = load_safetensors(file_path, device=map_location)
-                        hf_state.update(file_state)
-                        
-                        # Periodic cleanup for large models
-                        if (i + 1) % 3 == 0:  # Every 3 files
+                # For very large models, use ultra low memory mode
+                if low_cpu_mem_usage and len(safetensor_files) > 2:
+                    if verbose:
+                        print("Using ultra low memory loading mode...")
+                    
+                    # Process and load each file individually to minimize peak memory
+                    for i, file_path in enumerate(tqdm(safetensor_files, desc='Loading', disable=not verbose)):
+                        try:
+                            log_memory(f"loading file {i+1}/{len(safetensor_files)}")
+                            
+                            # Load one file at a time
+                            file_state = load_safetensors(file_path, device=map_location)
+                            
+                            # Convert this portion immediately
+                            partial_converted = self._convert_partial_state(file_state, i, verbose)
+                            
+                            # Load converted weights directly into model to avoid storing in memory
+                            self._load_partial_state_dict(partial_converted, strict=False, verbose=verbose)
+                            
+                            # Clean up immediately
+                            del file_state, partial_converted
                             gc.collect()
                             if torch.cuda.is_available():
                                 torch.cuda.empty_cache()
                                 
-                    except Exception as e:
-                        print(f"Error loading {file_path}: {e}")
-                        # Clean up partial state
-                        del hf_state
-                        gc.collect()
-                        raise
+                        except Exception as e:
+                            print(f"Error loading {file_path}: {e}")
+                            raise
+                    
+                    log_memory("after ultra low memory loading")
+                    return self
+                
+                else:
+                    # Standard loading with periodic cleanup
+                    for i, file_path in enumerate(tqdm(safetensor_files, desc='Loading', disable=not verbose)):
+                        try:
+                            file_state = load_safetensors(file_path, device=map_location)
+                            hf_state.update(file_state)
+                            
+                            # More frequent cleanup for large models
+                            if (i + 1) % 2 == 0:  # Every 2 files instead of 3
+                                gc.collect()
+                                if torch.cuda.is_available():
+                                    torch.cuda.empty_cache()
+                                    
+                        except Exception as e:
+                            print(f"Error loading {file_path}: {e}")
+                            # Clean up partial state
+                            del hf_state
+                            gc.collect()
+                            raise
+                
+                log_memory("after loading files")
                 
                 # Convert HF state to your model format
                 try:
                     converted_state = self.convert_hf_to_your_model(hf_state)
                     
-                    # Clean up original HF state to free memory
+                    # Clean up original HF state immediately
                     del hf_state
                     gc.collect()
+                    log_memory("after conversion")
                     
                     if verbose:
                         print(f"Converted {len(converted_state)} parameters")
@@ -189,6 +238,7 @@ class PreTrainedModel:
                     # Clean up converted state
                     del converted_state
                     gc.collect()
+                    log_memory("after loading into model")
                     
                     return self
                     
