@@ -1,5 +1,4 @@
 import os
-import psutil
 import json
 import torch
 import gc
@@ -140,8 +139,28 @@ class PreTrainedModel:
             # Memory monitoring
             def log_memory(stage=""):
                 if verbose:
-                    mem = psutil.virtual_memory()
-                    print(f"Memory usage {stage}: {mem.percent:.1f}% ({mem.used/1024**3:.1f}GB/{mem.total/1024**3:.1f}GB)")
+                    try:
+                        import psutil
+                        mem = psutil.virtual_memory()
+                        print(f"Memory usage {stage}: {mem.percent:.1f}% ({mem.used/1024**3:.1f}GB/{mem.total/1024**3:.1f}GB)")
+                    except ImportError:
+                        # Fallback memory monitoring without psutil
+                        import os
+                        try:
+                            # Linux/Unix memory check
+                            with open('/proc/meminfo', 'r') as f:
+                                meminfo = f.read()
+                                for line in meminfo.split('\n'):
+                                    if 'MemTotal:' in line:
+                                        total_kb = int(line.split()[1])
+                                    elif 'MemAvailable:' in line:
+                                        avail_kb = int(line.split()[1])
+                                used_gb = (total_kb - avail_kb) / 1024**2
+                                total_gb = total_kb / 1024**2
+                                print(f"Memory usage {stage}: {used_gb:.1f}GB/{total_gb:.1f}GB")
+                        except:
+                            print(f"Memory check {stage}: psutil not available, install with 'pip install psutil' for detailed monitoring")
+                    
                     if torch.cuda.is_available():
                         gpu_mem = torch.cuda.memory_allocated() / 1024**3
                         gpu_max = torch.cuda.max_memory_allocated() / 1024**3
@@ -315,6 +334,321 @@ class PreTrainedModel:
                     raise
         
         raise FileNotFoundError(f"No valid checkpoint found at {model_path}")
+
+    def _convert_partial_state(self, file_state: dict, file_index: int, verbose: bool) -> dict:
+        """Convert a portion of HF state for ultra low memory loading"""
+        converted = {}
+        
+        for hf_key, tensor in file_state.items():
+            # Convert keys based on patterns
+            if 'model.embed_tokens.weight' in hf_key:
+                converted['embedder.weight'] = tensor
+                converted['lm_head.weight'] = tensor  # Share reference
+            elif 'model.norm.weight' in hf_key:
+                converted['model.norm.weight'] = tensor
+            elif 'model.layers.' in hf_key:
+                # Extract layer number
+                parts = hf_key.split('.')
+                layer_idx = parts[2]
+                
+                # Convert attention weights
+                if 'self_attn.q_proj.weight' in hf_key:
+                    # Store temporarily for QKV concatenation
+                    converted[f'_temp_q_{layer_idx}'] = tensor
+                elif 'self_attn.k_proj.weight' in hf_key:
+                    converted[f'_temp_k_{layer_idx}'] = tensor
+                elif 'self_attn.v_proj.weight' in hf_key:
+                    converted[f'_temp_v_{layer_idx}'] = tensor
+                elif 'self_attn.o_proj.weight' in hf_key:
+                    new_key = hf_key.replace('self_attn.o_proj.weight', 'self_attn.o_proj.linear.weight')
+                    converted[new_key] = tensor
+                elif 'self_attn.o_proj.bias' in hf_key:
+                    new_key = hf_key.replace('self_attn.o_proj.bias', 'self_attn.o_proj.linear.bias')
+                    converted[new_key] = tensor
+                # QKV bias handling
+                elif 'self_attn.q_proj.bias' in hf_key:
+                    converted[f'_temp_q_bias_{layer_idx}'] = tensor
+                elif 'self_attn.k_proj.bias' in hf_key:
+                    converted[f'_temp_k_bias_{layer_idx}'] = tensor
+                elif 'self_attn.v_proj.bias' in hf_key:
+                    converted[f'_temp_v_bias_{layer_idx}'] = tensor
+                # MLP layers
+                elif 'mlp.gate_proj.weight' in hf_key:
+                    new_key = hf_key.replace('mlp.gate_proj.weight', 'mlp.gate_proj.linear.weight')
+                    converted[new_key] = tensor
+                elif 'mlp.up_proj.weight' in hf_key:
+                    new_key = hf_key.replace('mlp.up_proj.weight', 'mlp.up_proj.linear.weight')
+                    converted[new_key] = tensor
+                elif 'mlp.down_proj.weight' in hf_key:
+                    new_key = hf_key.replace('mlp.down_proj.weight', 'mlp.down_proj.linear.weight')
+                    converted[new_key] = tensor
+                # MLP bias
+                elif 'mlp.gate_proj.bias' in hf_key:
+                    new_key = hf_key.replace('mlp.gate_proj.bias', 'mlp.gate_proj.linear.bias')
+                    converted[new_key] = tensor
+                elif 'mlp.up_proj.bias' in hf_key:
+                    new_key = hf_key.replace('mlp.up_proj.bias', 'mlp.up_proj.linear.bias')
+                    converted[new_key] = tensor
+                elif 'mlp.down_proj.bias' in hf_key:
+                    new_key = hf_key.replace('mlp.down_proj.bias', 'mlp.down_proj.linear.bias')
+                    converted[new_key] = tensor
+                # Layer norms
+                elif 'input_layernorm.weight' in hf_key:
+                    converted[hf_key] = tensor
+                elif 'post_attention_layernorm.weight' in hf_key:
+                    converted[hf_key] = tensor
+        
+        return converted
+
+    def _load_partial_state_dict(self, partial_state: dict, strict: bool, verbose: bool):
+        """Load a partial state dict into the model"""
+        # Handle QKV concatenation for any complete sets
+        qkv_layers = {}
+        qkv_bias_layers = {}
+        
+        # Collect QKV weights and biases
+        for key in list(partial_state.keys()):
+            if key.startswith('_temp_'):
+                parts = key.split('_')
+                if len(parts) >= 3:
+                    if 'bias' in key:
+                        # Handle bias: _temp_q_bias_0 -> q, bias, 0
+                        qkv_type = parts[1]  # q, k, or v
+                        layer_idx = parts[3]  # layer index
+                        
+                        if layer_idx not in qkv_bias_layers:
+                            qkv_bias_layers[layer_idx] = {}
+                        qkv_bias_layers[layer_idx][qkv_type] = partial_state.pop(key)
+                    else:
+                        # Handle weight: _temp_q_0 -> q, 0
+                        qkv_type = parts[1]  # q, k, or v
+                        layer_idx = parts[2]  # layer index
+                        
+                        if layer_idx not in qkv_layers:
+                            qkv_layers[layer_idx] = {}
+                        qkv_layers[layer_idx][qkv_type] = partial_state.pop(key)
+        
+        # Create QKV concatenations for complete sets
+        for layer_idx, qkv_dict in qkv_layers.items():
+            if all(k in qkv_dict for k in ['q', 'k', 'v']):
+                qkv_weight = torch.cat([qkv_dict['q'], qkv_dict['k'], qkv_dict['v']], dim=0)
+                partial_state[f'model.layers.{layer_idx}.self_attn.qkv_proj.linear.weight'] = qkv_weight
+        
+        # Create QKV bias concatenations for complete sets
+        for layer_idx, qkv_bias_dict in qkv_bias_layers.items():
+            if all(k in qkv_bias_dict for k in ['q', 'k', 'v']):
+                qkv_bias = torch.cat([qkv_bias_dict['q'], qkv_bias_dict['k'], qkv_bias_dict['v']], dim=0)
+                partial_state[f'model.layers.{layer_idx}.self_attn.qkv_proj.linear.bias'] = qkv_bias
+        
+        # Load what we can into the model
+        model_state = self.state_dict()
+        loaded_count = 0
+        
+        for key, tensor in partial_state.items():
+            if key in model_state:
+                try:
+                    model_state[key].copy_(tensor)
+                    loaded_count += 1
+                    if verbose and loaded_count % 10 == 0:  # Log every 10th parameter
+                        print(f"Loaded {loaded_count} parameters...")
+                except Exception as e:
+                    if verbose:
+                        print(f"Failed to load {key}: {e}")
+            else:
+                if verbose:
+                    print(f"Key not found in model: {key}")
+
+    def load_with_swap(self, model_path, swap_dir="/tmp/model_swap", **kwargs):
+        """Ultra low memory loading using disk swap for very large models"""
+        import tempfile
+        import pickle
+        
+        os.makedirs(swap_dir, exist_ok=True)
+        
+        def _collect_safetensors_files(path):
+            if os.path.isfile(path) and path.endswith('.safetensors'):
+                return [path]
+            if os.path.isdir(path):
+                # Check for index file
+                idx_path = os.path.join(path, 'model.safetensors.index.json')
+                if os.path.isfile(idx_path):
+                    with open(idx_path, 'r') as f:
+                        idx_data = json.load(f)
+                    return sorted(set(os.path.join(path, v) for v in idx_data['weight_map'].values()))
+                # Get all safetensors files
+                return sorted([os.path.join(path, f) for f in os.listdir(path) if f.endswith('.safetensors')])
+            return []
+        
+        print("Using disk swap loading for ultra large model...")
+        
+        # Load and immediately save to disk
+        safetensor_files = _collect_safetensors_files(model_path)
+        temp_files = []
+        
+        try:
+            for i, file_path in enumerate(tqdm(safetensor_files, desc='Processing to swap')):
+                # Load one file
+                file_state = load_safetensors(file_path, device='cpu')
+                
+                # Convert portion
+                converted = self._convert_partial_state(file_state, i, kwargs.get('verbose', True))
+                del file_state
+                
+                # Save to temporary file
+                temp_file = os.path.join(swap_dir, f"temp_state_{i}.pkl")
+                with open(temp_file, 'wb') as f:
+                    pickle.dump(converted, f)
+                temp_files.append(temp_file)
+                
+                del converted
+                gc.collect()
+            
+            # Now load from swap files one by one
+            for temp_file in tqdm(temp_files, desc='Loading from swap'):
+                with open(temp_file, 'rb') as f:
+                    partial_state = pickle.load(f)
+                
+                self._load_partial_state_dict(partial_state, False, kwargs.get('verbose', True))
+                del partial_state
+                gc.collect()
+        
+        finally:
+            # Clean up temp files
+            for temp_file in temp_files:
+                try:
+                    os.remove(temp_file)
+                except:
+                    pass
+        
+        print("Swap loading complete!")
+        return self
+
+    def _convert_partial_state(self, file_state: dict, file_index: int, verbose: bool) -> dict:
+        """Convert a portion of HF state for ultra low memory loading"""
+        converted = {}
+        
+        for hf_key, tensor in file_state.items():
+            # Convert keys based on patterns
+            if 'model.embed_tokens.weight' in hf_key:
+                converted['embedder.weight'] = tensor
+                converted['lm_head.weight'] = tensor  # Share reference
+            elif 'model.norm.weight' in hf_key:
+                converted['model.norm.weight'] = tensor
+            elif 'model.layers.' in hf_key:
+                # Extract layer number
+                parts = hf_key.split('.')
+                layer_idx = parts[2]
+                
+                # Convert attention weights
+                if 'self_attn.q_proj.weight' in hf_key:
+                    # We need to collect Q, K, V for concatenation
+                    # For now, store them separately and handle in a second pass
+                    converted[f'_temp_q_{layer_idx}'] = tensor
+                elif 'self_attn.k_proj.weight' in hf_key:
+                    converted[f'_temp_k_{layer_idx}'] = tensor
+                elif 'self_attn.v_proj.weight' in hf_key:
+                    converted[f'_temp_v_{layer_idx}'] = tensor
+                elif 'self_attn.o_proj.weight' in hf_key:
+                    new_key = hf_key.replace('self_attn.o_proj.weight', 'self_attn.o_proj.linear.weight')
+                    converted[new_key] = tensor
+                elif 'mlp.gate_proj.weight' in hf_key:
+                    new_key = hf_key.replace('mlp.gate_proj.weight', 'mlp.gate_proj.linear.weight')
+                    converted[new_key] = tensor
+                elif 'mlp.up_proj.weight' in hf_key:
+                    new_key = hf_key.replace('mlp.up_proj.weight', 'mlp.up_proj.linear.weight')
+                    converted[new_key] = tensor
+                elif 'mlp.down_proj.weight' in hf_key:
+                    new_key = hf_key.replace('mlp.down_proj.weight', 'mlp.down_proj.linear.weight')
+                    converted[new_key] = tensor
+                elif 'input_layernorm.weight' in hf_key:
+                    converted[hf_key] = tensor
+                elif 'post_attention_layernorm.weight' in hf_key:
+                    converted[hf_key] = tensor
+        
+        return converted
+
+    def _load_partial_state_dict(self, partial_state: dict, strict: bool, verbose: bool):
+        """Load a partial state dict into the model"""
+        # Handle QKV concatenation for any complete sets
+        qkv_layers = {}
+        for key in list(partial_state.keys()):
+            if key.startswith('_temp_'):
+                parts = key.split('_')
+                qkv_type = parts[1]  # q, k, or v
+                layer_idx = parts[2]
+                
+                if layer_idx not in qkv_layers:
+                    qkv_layers[layer_idx] = {}
+                qkv_layers[layer_idx][qkv_type] = partial_state.pop(key)
+        
+        # Create QKV concatenations for complete sets
+        for layer_idx, qkv_dict in qkv_layers.items():
+            if all(k in qkv_dict for k in ['q', 'k', 'v']):
+                qkv_weight = torch.cat([qkv_dict['q'], qkv_dict['k'], qkv_dict['v']], dim=0)
+                partial_state[f'model.layers.{layer_idx}.self_attn.qkv_proj.linear.weight'] = qkv_weight
+        
+        # Load what we can
+        model_state = self.state_dict()
+        for key, tensor in partial_state.items():
+            if key in model_state:
+                try:
+                    model_state[key].copy_(tensor)
+                    if verbose:
+                        print(f"Loaded: {key}")
+                except Exception as e:
+                    if verbose:
+                        print(f"Failed to load {key}: {e}")
+
+    def load_with_swap(self, model_path, swap_dir="/tmp/model_swap", **kwargs):
+        """Ultra low memory loading using disk swap for very large models"""
+        import tempfile
+        import pickle
+        
+        os.makedirs(swap_dir, exist_ok=True)
+        
+        print("Using disk swap loading for ultra large model...")
+        
+        # Load and immediately save to disk
+        safetensor_files = self._collect_safetensors_files(model_path)
+        temp_files = []
+        
+        try:
+            for i, file_path in enumerate(tqdm(safetensor_files, desc='Processing to swap')):
+                # Load one file
+                file_state = load_safetensors(file_path, device='cpu')
+                
+                # Convert portion
+                converted = self._convert_partial_state(file_state, i, kwargs.get('verbose', True))
+                del file_state
+                
+                # Save to temporary file
+                temp_file = os.path.join(swap_dir, f"temp_state_{i}.pkl")
+                with open(temp_file, 'wb') as f:
+                    pickle.dump(converted, f)
+                temp_files.append(temp_file)
+                
+                del converted
+                gc.collect()
+            
+            # Now load from swap files one by one
+            for temp_file in tqdm(temp_files, desc='Loading from swap'):
+                with open(temp_file, 'rb') as f:
+                    partial_state = pickle.load(f)
+                
+                self._load_partial_state_dict(partial_state, False, kwargs.get('verbose', True))
+                del partial_state
+                gc.collect()
+        
+        finally:
+            # Clean up temp files
+            for temp_file in temp_files:
+                try:
+                    os.remove(temp_file)
+                except:
+                    pass
+        
+        print("Swap loading complete!")
+        return self
 
     def load_in_8bit(self, model_path, **kwargs):
         """Load model with 8-bit quantization (assumes model already has quantized layers)"""
