@@ -328,7 +328,7 @@ class QwenForCausalLM(nn.Module, PreTrainedModel, TextGeneration):
         self.model = QwenModel(config)
         
         # Add the lm_head layer for tied embeddings
-        self.lm_head = Linear(config.hidden_size, vocab_size, bias=config.quant, quant_type=config.quant_type)
+        self.lm_head = Linear(config.hidden_size, vocab_size, bias=False, quant=config.quant, quant_type=config.quant_type)
         
         # Initialize lm_head with embedder weights (tied embeddings)
         if self.tie_word_embeddings:
